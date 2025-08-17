@@ -1,114 +1,204 @@
 #include <SDL2/SDL.h>
+#include <GL/gl.h>
+#include <GL/glu.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
-#define WIDTH 640
-#define HEIGHT 480
+#define WIDTH 1800
+#define HEIGHT 950    
+#define NUM_CUBES 100
+#define G 0.01f
+#define Y_THRESHOLD -5.0f   
+#define MAX_HEIGHT 5.0f
 
-// Vertices del cubo (8 puntos en 3D)
+// Cámara
+float camYaw = 0.0f;
+float camPitch = 0.0f;
+float camDist = 15.0f;
+
 typedef struct {
     float x, y, z;
 } Vec3;
 
-// Proyección simple 3D a 2D (perspectiva)
-void project(Vec3 v, int *x, int *y, float angle) {
-    // Rotación simple en Y
-    float cosA = cos(angle);
-    float sinA = sin(angle);
+typedef struct {
+    Vec3 pos;
+    float angle;
+    float speed;
+    float moveAngle;
+    int state;       // 0 = rotando, 1 = cayendo
+    float stepHeight;
+    float rotAmount;
+    float rotTarget;
+    float vy;
+    float targetY;
+    float r, g, b;   // color
+    int rotDirection; // 1 o -1
+} Cube;
 
-    float x_rot = v.x * cosA - v.z * sinA;
-    float z_rot = v.x * sinA + v.z * cosA;
-    float y_rot = v.y;
+// Actualiza un cubo individual
+void updateCube(Cube *c) {
+    if(c->state == 0) { // rotando
+        float rotStep = 0.05f * c->rotDirection;
+        c->angle += rotStep;
+        c->rotAmount += fabs(rotStep);
+        if(c->rotAmount >= c->rotTarget) {
+            c->rotAmount = 0;
+            c->state = 1;
+            c->vy = 0;
+            c->targetY = c->pos.y - c->stepHeight;
+        }
+    } else if(c->state == 1) { // cayendo
+        c->vy += G;
+        c->pos.y -= c->vy;
+        if(c->pos.y <= c->targetY) {
+            c->pos.y = c->targetY;
+            c->vy = 0;
+            c->state = 0;
+        }
+    }
 
-    float distance = 3.0f;  // distancia cámara
-    float z_proj = 1.0f / (distance - z_rot);
+    // Avance
+    c->pos.x += cosf(c->moveAngle) * c->speed;
+    c->pos.z += sinf(c->moveAngle) * c->speed;
 
-    *x = (int)(WIDTH / 2 + x_rot * z_proj * WIDTH);
-    *y = (int)(HEIGHT / 2 - y_rot * z_proj * HEIGHT);
+    // Reinicio si pasa el umbral
+    if(c->pos.y < Y_THRESHOLD) {
+        c->pos.y = MAX_HEIGHT + ((float)rand()/RAND_MAX)*5.0f; // altura inicial aleatoria
+        c->pos.x = ((float)rand()/RAND_MAX)*20.0f - 10.0f;
+        c->pos.z = ((float)rand()/RAND_MAX)*20.0f - 10.0f;
+        c->angle = ((float)rand()/RAND_MAX)*2*M_PI;
+        c->rotAmount = 0;
+        c->rotDirection = (rand()%2)?1:-1;
+    }
 }
 
-// Dibuja línea entre dos puntos
-void draw_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2) {
-    SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+// Dibuja un cubo en una posición dada, con rotación y color
+void drawCubeAt(Vec3 pos, float angle, float r, float g, float b) {
+    glPushMatrix();
+    glTranslatef(pos.x, pos.y, pos.z);
+    glRotatef(angle * 180.0f / M_PI, 0.0f, 0.0f, 1.0f);
+
+    glColor3f(r, g, b); // color uniforme
+
+    glBegin(GL_QUADS);
+
+    // Cara frontal
+    glVertex3f(-0.5f,-0.5f,0.5f);
+    glVertex3f(0.5f,-0.5f,0.5f);
+    glVertex3f(0.5f,0.5f,0.5f);
+    glVertex3f(-0.5f,0.5f,0.5f);
+
+    // Cara trasera
+    glVertex3f(-0.5f,-0.5f,-0.5f);
+    glVertex3f(-0.5f,0.5f,-0.5f);
+    glVertex3f(0.5f,0.5f,-0.5f);
+    glVertex3f(0.5f,-0.5f,-0.5f);
+
+    // Cara izquierda
+    glVertex3f(-0.5f,-0.5f,-0.5f);
+    glVertex3f(-0.5f,-0.5f,0.5f);
+    glVertex3f(-0.5f,0.5f,0.5f);
+    glVertex3f(-0.5f,0.5f,-0.5f);
+
+    // Cara derecha
+    glVertex3f(0.5f,-0.5f,-0.5f);
+    glVertex3f(0.5f,0.5f,-0.5f);
+    glVertex3f(0.5f,0.5f,0.5f);
+    glVertex3f(0.5f,-0.5f,0.5f);
+
+    // Cara superior
+    glVertex3f(-0.5f,0.5f,-0.5f);
+    glVertex3f(-0.5f,0.5f,0.5f);
+    glVertex3f(0.5f,0.5f,0.5f);
+    glVertex3f(0.5f,0.5f,-0.5f);
+
+    // Cara inferior
+    glVertex3f(-0.5f,-0.5f,-0.5f);
+    glVertex3f(0.5f,-0.5f,-0.5f);
+    glVertex3f(0.5f,-0.5f,0.5f);
+    glVertex3f(-0.5f,-0.5f,0.5f);
+
+    glEnd();
+    glPopMatrix();
 }
 
-int main(int argc, char *argv[]) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        printf("Error SDL_Init: %s\n", SDL_GetError());
-        return 1;
+// Inicializa cubos con posiciones y velocidades aleatorias
+void initCubes(Cube cubes[NUM_CUBES]) {
+    srand(time(NULL));
+    for(int i=0;i<NUM_CUBES;i++) {
+        cubes[i].pos.x = ((float)rand()/RAND_MAX)*20.0f - 10.0f; // -10 a 10
+        cubes[i].pos.y = ((float)rand()/RAND_MAX)*5.0f;           // altura inicial
+        cubes[i].pos.z = ((float)rand()/RAND_MAX)*60.0f - 50.0f; // -20 a 20, más profundidad
+        cubes[i].angle = 0.0f; // todos comienzan en la misma orientación
+        cubes[i].speed = 0.01f + ((float)rand()/RAND_MAX)*0.05f;
+        cubes[i].moveAngle = ((float)rand()/RAND_MAX)*2*M_PI;
+        cubes[i].state = 0;
+        cubes[i].stepHeight = 0.5f + ((float)rand()/RAND_MAX)*1.5f; // 0.5 a 2.0
+        cubes[i].rotAmount = 0.0f;
+        cubes[i].rotTarget = M_PI/2;
+        cubes[i].vy = 0.0f;
+        cubes[i].targetY = cubes[i].pos.y - cubes[i].stepHeight;
+        cubes[i].r = (float)rand()/RAND_MAX;
+        cubes[i].g = (float)rand()/RAND_MAX;
+        cubes[i].b = (float)rand()/RAND_MAX;
+        cubes[i].rotDirection = (rand()%2)?1:-1; // sentido de giro
     }
+}
 
-    SDL_Window *window = SDL_CreateWindow("Cubo 3D Wireframe",
-                                          SDL_WINDOWPOS_CENTERED,
-                                          SDL_WINDOWPOS_CENTERED,
-                                          WIDTH, HEIGHT, 0);
-    if (!window) {
-        printf("Error SDL_CreateWindow: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
 
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        printf("Error SDL_CreateRenderer: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
+int main(int argc, char* argv[]) {
 
-    // Definimos los 8 vértices del cubo (tamaño 1)
-    Vec3 vertices[8] = {
-        {-0.5f, -0.5f, -0.5f},
-        { 0.5f, -0.5f, -0.5f},
-        { 0.5f,  0.5f, -0.5f},
-        {-0.5f,  0.5f, -0.5f},
-        {-0.5f, -0.5f,  0.5f},
-        { 0.5f, -0.5f,  0.5f},
-        { 0.5f,  0.5f,  0.5f},
-        {-0.5f,  0.5f,  0.5f}
-    };
+    Cube cubes[NUM_CUBES];
+    initCubes(cubes);
 
-    // Aristas del cubo (pares de índices de vertices)
-    int edges[12][2] = {
-        {0,1},{1,2},{2,3},{3,0}, // cara trasera
-        {4,5},{5,6},{6,7},{7,4}, // cara frontal
-        {0,4},{1,5},{2,6},{3,7}  // conexiones entre caras
-    };
+    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Window* window = SDL_CreateWindow("Cubo Escalera OpenGL",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, SDL_WINDOW_OPENGL);
+    SDL_GLContext glContext = SDL_GL_CreateContext(window);
+
+    glEnable(GL_DEPTH_TEST);
 
     int running = 1;
     SDL_Event event;
-    float angle = 0.0f;
 
-    while (running) {
+    while(running) {
         while(SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                running = 0;
-            }
+            if(event.type == SDL_QUIT) running = 0;
         }
 
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // negro
-        SDL_RenderClear(renderer);
-
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); // blanco para líneas
-
-        // Proyectar y dibujar aristas
-        for (int i = 0; i < 12; i++) {
-            int x1, y1, x2, y2;
-            project(vertices[edges[i][0]], &x1, &y1, angle);
-            project(vertices[edges[i][1]], &x2, &y2, angle);
-            draw_line(renderer, x1, y1, x2, y2);
+        // Actualizar todos los cubos
+        for(int i=0;i<NUM_CUBES;i++) {
+            updateCube(&cubes[i]);
         }
 
-        SDL_RenderPresent(renderer);
+        glViewport(0,0,WIDTH,HEIGHT);
+        glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        angle += 0.01f;  // rotar lentamente
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45.0f, (float)WIDTH/(float)HEIGHT, 0.1f, 100.0f);
 
-        SDL_Delay(16); // ~60 FPS
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        // Cámara
+        gluLookAt(camDist * sinf(camYaw), camDist * sinf(camPitch), camDist * cosf(camYaw),
+                  0,0,0,
+                  0,1,0);
+
+        // Dibujar todos los cubos
+        for(int i=0;i<NUM_CUBES;i++) {
+            drawCubeAt(cubes[i].pos, cubes[i].angle, cubes[i].r, cubes[i].g, cubes[i].b);
+        }
+
+        SDL_GL_SwapWindow(window);
+        SDL_Delay(16);
     }
 
-    SDL_DestroyRenderer(renderer);
+    SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
     SDL_Quit();
-
     return 0;
 }
