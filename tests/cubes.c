@@ -38,6 +38,11 @@ void updateCube(Cube *c) {
             c->state = 0;                       // Volver a estado de rotación
         }
     }
+    // Estado 2: cubo estático
+    else if(c->state == 2) {
+        // No hacer nada: cubo completamente estático
+    }
+
 
     // Movimiento horizontal continuo (independiente del estado)
     c->pos.x += cosf(c->moveAngle) * c->speed;  // Componente X del movimiento
@@ -52,6 +57,7 @@ void updateCube(Cube *c) {
         c->angle = ((float)rand()/RAND_MAX)*2*M_PI;             // Ángulo inicial aleatorio
         c->rotAmount = 0;                                       // Resetear rotación acumulada
         c->rotDirection = (rand()%2)?1:-1;                      // Nueva dirección de rotación aleatoria
+        c->state = 0;
     }
 }
 

@@ -7,7 +7,7 @@
 #include <math.h>
 
 // Constantes
-#define NUM_CUBES 100       // Número total de cubos en la escena
+#define NUM_CUBES 10       // Número total de cubos en la escena
 #define G 0.01f             // Constante de gravedad (aceleración hacia abajo)
 #define Y_THRESHOLD -5.0f   // Umbral Y bajo el cual los cubos se reinician
 #define MAX_HEIGHT 5.0f     // Altura máxima para el reinicio de cubos
