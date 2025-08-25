@@ -89,7 +89,7 @@ void initOpenGL(){
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
 
-    GLfloat lightPos[] = { 0.0f, 50.0f, 50.0f, 1.0f };
+    GLfloat lightPos[] = { 20.0f, 100.0f, 30.0f, 1.0f };
     GLfloat ambient[]  = { 0.2f, 0.2f, 0.2f, 1.0f };
     GLfloat diffuse[]  = { 0.8f, 0.8f, 0.8f, 1.0f };
     GLfloat specular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -139,6 +139,7 @@ int main(int argc, char* argv[]){
     float camSpeed = 0.01f;
     float camX, camZ;
     float lookX, lookY, lookZ;
+    int viewMode = 0; // 0=orbit, 1=top, 2=side
 
     srand((unsigned int)time(NULL));
     for(int i=0;i<numSpheres;i++){
@@ -152,7 +153,7 @@ int main(int argc, char* argv[]){
         spheres[i].r = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].g = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].b = 0.3f + ((rand()%100)/100.0f)*0.7f;
-        spheres[i].active = 0; // empiezan inactivas
+        spheres[i].active = 0; 
     }
 
     int running = 1;
@@ -164,6 +165,7 @@ int main(int argc, char* argv[]){
     int spawned = 0;
 
     char title[128];
+    
 
     while(running){
         while(SDL_PollEvent(&event)){
@@ -171,10 +173,17 @@ int main(int argc, char* argv[]){
             if(event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED){
                 reshape(event.window.data1, event.window.data2);
             }
+            if(event.type == SDL_KEYDOWN){
+                switch(event.key.keysym.sym){
+                    case SDLK_1: viewMode = 0; break; // órbita
+                    case SDLK_2: viewMode = 1; break; // top
+                    case SDLK_3: viewMode = 2; break; // side
+                }
+            }
         }
 
         Uint32 now = SDL_GetTicks();
-        float deltaTime = (now - lastTime) / 1000.0f; // en segundos
+        float deltaTime = (now - lastTime) / 1000.0f;
         lastTime = now;
 
         if(now - lastSpawn >= SPAWN_INTERVAL && spawned < numSpheres){
@@ -183,13 +192,32 @@ int main(int argc, char* argv[]){
             lastSpawn = now;
         }
 
-        yaw += camSpeed;
-        camX = centerX + radius * sinf(yaw);
-        camZ = centerZ + radius * cosf(yaw);
-        lookX = centerX - camX;
-        lookY = -camY;
-        lookZ = centerZ - camZ;
+        // Actualizar posición de cámara según viewMode
+        if(viewMode == 0){ // órbita
+            yaw += camSpeed;
+            camX = centerX + radius * sinf(yaw);
+            camZ = centerZ + radius * cosf(yaw);
+            camY = 15.0f;
+            lookX = centerX - camX;
+            lookY = -camY;
+            lookZ = centerZ - camZ;
+        } else if(viewMode == 1){ // vista desde arriba
+            camX = centerX; 
+            camZ = centerZ;
+            camY = 90.0f;
+            lookX = 0.0f;
+            lookY = -55.0f;
+            lookZ = -0.8f;
+        } else if(viewMode == 2){ // vista lateral
+            camX = -20.0f; // fuera del grid
+            camZ = centerZ;
+            camY = 20.0f;
+            lookX = centerX + 20.0f;
+            lookY = -20.0f;
+            lookZ = centerZ - camZ;
+        }
 
+        // Actualizar esferas
         for(int i=0;i<numSpheres;i++){
             if(!spheres[i].active) continue;
             spheres[i].x += spheres[i].vx;
@@ -210,15 +238,15 @@ int main(int argc, char* argv[]){
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glLoadIdentity();
         gluLookAt(camX, camY, camZ,
-                  camX + lookX, camY + lookY, camZ + lookZ,
-                  0,1,0);
+            camX + lookX, camY + lookY, camZ + lookZ,
+            0,1,0);
 
         renderTerrain(t);
         renderSpheres();
 
         SDL_GL_SwapWindow(window);
 
-        // Actualizar título con FPS
+        // FPS
         float fps = 1.0f / deltaTime;
         sprintf(title, "Olas con Esferas - FPS: %.2f", fps);
         SDL_SetWindowTitle(window, title);
@@ -232,3 +260,4 @@ int main(int argc, char* argv[]){
     SDL_Quit();
     return 0;
 }
+
