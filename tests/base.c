@@ -5,29 +5,29 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define GRID_SIZE 70
+#define GRID_SIZE 100
 #define SCALE 1.0f
 #define DEF_SPHERES 150
 #define GRAVITY -0.02f
 #define BOUNCE 0.7f
+#define SPAWN_INTERVAL 500  // tiempo entre spawns en ms
 
 typedef struct {
     float x,y,z;
     float vx,vz,vy;
     float radius;
-    float r,g,b;  // color de la esfera
+    float r,g,b;  
+    int active;   // nueva bandera de actividad
 } Sphere;
 
 Sphere spheres[DEF_SPHERES];
 
-// --- Parámetros dinámicos ---
-int numSpheres = 150;       // número de esferas
-float waveAmplitude = 2.0f; // altura de las olas
-float waveFrequency = 1.0f; // frecuencia de las olas
+int numSpheres = 150;       
+float waveAmplitude = 2.0f; 
+float waveFrequency = 1.0f; 
 int windowWidth = 1024;
 int windowHeight = 768;
 
-// --- Función altura de ola ---
 float waveHeight(float x, float z, float t){
     return waveAmplitude * (
         1.5f*sinf(0.3f*x*waveFrequency + t) + 
@@ -42,7 +42,6 @@ void getTerrainColor(float x, float z, float t, float *r, float *g, float *b){
     *b = 0.7f + 0.2f * cosf(t + (x+z)*0.05f);
 }
 
-// --- Renderizar terreno ---
 void renderTerrain(float t){
     for(int i=0;i<GRID_SIZE-1;i++){
         for(int j=0;j<GRID_SIZE-1;j++){
@@ -56,7 +55,7 @@ void renderTerrain(float t){
             glColor3f(r,g,b);
 
             glBegin(GL_QUADS);
-                glNormal3f(0,1,0); // normal aproximada
+                glNormal3f(0,1,0);
                 glVertex3f(i*SCALE,h1,j*SCALE);
                 glVertex3f((i+1)*SCALE,h2,j*SCALE);
                 glVertex3f((i+1)*SCALE,h3,(j+1)*SCALE);
@@ -66,9 +65,9 @@ void renderTerrain(float t){
     }
 }
 
-// --- Renderizar esferas ---
 void renderSpheres(){
     for(int i=0;i<numSpheres;i++){
+        if(!spheres[i].active) continue; // solo esferas activas
         glPushMatrix();
         glTranslatef(spheres[i].x,spheres[i].y,spheres[i].z);
 
@@ -84,10 +83,8 @@ void renderSpheres(){
     }
 }
 
-// --- Inicialización de OpenGL ---
 void initOpenGL(){
     glEnable(GL_DEPTH_TEST);
-
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
@@ -108,12 +105,10 @@ void initOpenGL(){
     glMaterialfv(GL_FRONT, GL_SHININESS, shininess);
 }
 
-// --- Redimensionar ventana ---
 void reshape(int w, int h){
     if(h == 0) h = 1;
     windowWidth = w;
     windowHeight = h;
-
     glViewport(0,0,w,h);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -136,10 +131,8 @@ int main(int argc, char* argv[]){
     reshape(windowWidth, windowHeight);
     initOpenGL();
 
-    // --- Cámara ---
     float centerX = (GRID_SIZE * SCALE) / 2.0f;
     float centerZ = (GRID_SIZE * SCALE) / 2.0f;
-    float centerY = 0.0f;
     float camY = 15.0f;
     float radius = 40.0f;
     float yaw = 0.0f;
@@ -151,15 +144,15 @@ int main(int argc, char* argv[]){
     for(int i=0;i<numSpheres;i++){
         spheres[i].x = rand()%GRID_SIZE*SCALE;
         spheres[i].z = rand()%GRID_SIZE*SCALE;
-        spheres[i].y = 10.0f + rand()%5;
+        spheres[i].y = 20.0f + ((float)rand() / RAND_MAX) * 60.0f;
         spheres[i].vx = ((rand()%100)/100.0f -0.5f)*0.2f;
         spheres[i].vz = ((rand()%100)/100.0f -0.5f)*0.2f;
         spheres[i].vy = 0.0f;
         spheres[i].radius = 0.5f;
-
         spheres[i].r = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].g = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].b = 0.3f + ((rand()%100)/100.0f)*0.7f;
+        spheres[i].active = 0; // empiezan inactivas
     }
 
     int running = 1;
@@ -167,7 +160,9 @@ int main(int argc, char* argv[]){
     float t = 0.0f;
 
     Uint32 lastTime = SDL_GetTicks();
-    int frames = 0;
+    Uint32 lastSpawn = lastTime;
+    int spawned = 0;
+
     char title[128];
 
     while(running){
@@ -178,14 +173,25 @@ int main(int argc, char* argv[]){
             }
         }
 
+        Uint32 now = SDL_GetTicks();
+        float deltaTime = (now - lastTime) / 1000.0f; // en segundos
+        lastTime = now;
+
+        if(now - lastSpawn >= SPAWN_INTERVAL && spawned < numSpheres){
+            spheres[spawned].active = 1;
+            spawned++;
+            lastSpawn = now;
+        }
+
         yaw += camSpeed;
         camX = centerX + radius * sinf(yaw);
         camZ = centerZ + radius * cosf(yaw);
         lookX = centerX - camX;
-        lookY = centerY - camY;
+        lookY = -camY;
         lookZ = centerZ - camZ;
 
         for(int i=0;i<numSpheres;i++){
+            if(!spheres[i].active) continue;
             spheres[i].x += spheres[i].vx;
             spheres[i].z += spheres[i].vz;
             spheres[i].vy += GRAVITY;
@@ -195,18 +201,6 @@ int main(int argc, char* argv[]){
             if(spheres[i].y < floorY){
                 spheres[i].y = floorY;
                 spheres[i].vy = -spheres[i].vy * BOUNCE;
-            }
-
-            for(int j=i+1;j<numSpheres;j++){
-                float dx = spheres[j].x - spheres[i].x;
-                float dz = spheres[j].z - spheres[i].z;
-                float dist = sqrtf(dx*dx + dz*dz);
-                float minDist = spheres[i].radius + spheres[j].radius;
-                if(dist < minDist && dist > 0.0f){
-                    float overlap = 0.5f*(minDist - dist)/dist;
-                    spheres[i].x -= dx*overlap; spheres[i].z -= dz*overlap;
-                    spheres[j].x += dx*overlap; spheres[j].z += dz*overlap;
-                }
             }
 
             if(spheres[i].x < 0 || spheres[i].x > GRID_SIZE*SCALE) spheres[i].vx *= -1;
@@ -223,18 +217,14 @@ int main(int argc, char* argv[]){
         renderSpheres();
 
         SDL_GL_SwapWindow(window);
+
+        // Actualizar título con FPS
+        float fps = 1.0f / deltaTime;
+        sprintf(title, "Olas con Esferas - FPS: %.2f", fps);
+        SDL_SetWindowTitle(window, title);
+
         SDL_Delay(16);
         t += 0.05f;
-
-        frames++;
-        Uint32 currentTime = SDL_GetTicks();
-        if(currentTime - lastTime >= 1000){
-            float fps = frames * 1000.0f / (currentTime - lastTime);
-            snprintf(title, sizeof(title), "Olas con Esferas - FPS: %.2f", fps);
-            SDL_SetWindowTitle(window, title);
-            frames = 0;
-            lastTime = currentTime;
-        }
     }
 
     SDL_GL_DeleteContext(context);
