@@ -27,7 +27,9 @@ float waveFrequency = 1.0f;
 int windowWidth = 1024;
 int windowHeight = 768;
 
-// Z-buffer
+// Variables para SDL Texture
+SDL_Texture* screenTexture = NULL;
+Uint32* frameBuffer = NULL;
 float* zbuffer = NULL;
 
 // -----------------------------------------------------------------------------
@@ -62,6 +64,34 @@ void project3D(float camX,float camY,float camZ,float lookX,float lookY,float lo
     *sx = windowWidth/2 + tx * fov / tz;
     *sy = windowHeight/2 - ty * fov / tz;
     *depth = tz;
+}
+
+// funciones para gestión de buffers 
+void initRenderBuffers() {
+    frameBuffer = malloc(windowWidth * windowHeight * sizeof(Uint32));
+    zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
+}
+
+void freeRenderBuffers() {
+    if(frameBuffer) { free(frameBuffer); frameBuffer = NULL; }
+    if(zbuffer) { free(zbuffer); zbuffer = NULL; }
+}
+
+void resizeRenderBuffers(SDL_Renderer* renderer) {
+    // Liberar buffers antiguos
+    freeRenderBuffers();
+    
+    // Recrear textura con nuevo tamaño
+    if(screenTexture) {
+        SDL_DestroyTexture(screenTexture);
+    }
+    screenTexture = SDL_CreateTexture(renderer, 
+        SDL_PIXELFORMAT_ARGB8888, 
+        SDL_TEXTUREACCESS_STREAMING,
+        windowWidth, windowHeight);
+    
+    // Recrear buffers con nuevo tamaño
+    initRenderBuffers();
 }
 
 // -----------------------------------------------------------------------------
@@ -149,11 +179,12 @@ void updatePhysics(float t){
     }
 }
 
-// -----------------------------------------------------------------------------
-// Reset Z-buffer
-// -----------------------------------------------------------------------------
+// Reset Z-buffer 
 void resetZBuffer(){
-    for(int i=0;i<windowWidth*windowHeight;i++) zbuffer[i] = 1e30f;
+    for(int i=0; i<windowWidth*windowHeight; i++){
+        zbuffer[i] = 1e30f;
+        frameBuffer[i] = 0; // También resetear el framebuffer
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -170,12 +201,8 @@ void updateCamera(float centerX,float centerZ,float radius,float *camX,float *ca
     *lookZ = centerZ - *camZ;
 }
 
-// -----------------------------------------------------------------------------
-// Renderizar escena
-// -----------------------------------------------------------------------------
-// Función auxiliar para renderizar triángulo relleno con z-buffer (versión secuencial)
-void drawTriangle(float* zbuffer, Uint32* colorBuffer,
-                  float x1, float y1, float z1,
+// Función auxiliar para renderizar triángulo relleno con z-buffer 
+void drawTriangle(float x1, float y1, float z1,
                   float x2, float y2, float z2,
                   float x3, float y3, float z3,
                   Uint32 color) {
@@ -221,7 +248,7 @@ void drawTriangle(float* zbuffer, Uint32* colorBuffer,
         int minX = (int)fmaxf(0, ceilf(xLeft));
         int maxX = (int)fminf(windowWidth-1, floorf(xRight));
         
-        // Renderizar scanline
+        // Renderizar scanline DIRECTAMENTE AL FRAMEBUFFER
         for (int x = minX; x <= maxX; x++) {
             float t = (xRight - xLeft == 0) ? 0 : (x - xLeft) / (xRight - xLeft);
             float z = zLeft + t * (zRight - zLeft);
@@ -229,27 +256,18 @@ void drawTriangle(float* zbuffer, Uint32* colorBuffer,
             int idx = y * windowWidth + x;
             if (z < zbuffer[idx]) {
                 zbuffer[idx] = z;
-                colorBuffer[idx] = color;
+                frameBuffer[idx] = color;  // ← ESCRIBIR DIRECTO AL FRAMEBUFFER
             }
         }
     }
 }
 
 void renderScene(SDL_Renderer* renderer, float t,
-                          float lightX,float lightY,float lightZ,
-                          float camX,float camY,float camZ,
-                          float lookX,float lookY,float lookZ)
+                 float lightX,float lightY,float lightZ,
+                 float camX,float camY,float camZ,
+                 float lookX,float lookY,float lookZ)
 {
-    // Buffer único para versión secuencial
-    float* zbuffer = malloc(windowWidth*windowHeight*sizeof(float));
-    Uint32* colorBuffer = malloc(windowWidth*windowHeight*sizeof(Uint32));
-    
-    // Inicializar buffers
-    for(int i=0; i<windowWidth*windowHeight; i++){
-        zbuffer[i] = 1e30f;
-        colorBuffer[i] = 0;
-    }
-
+    // buffers persistentes
     // -----------------------------
     // Render Terrain secuencial con triángulos
     // -----------------------------
@@ -305,19 +323,8 @@ void renderScene(SDL_Renderer* renderer, float t,
             Uint32 color = (r<<16)|(g<<8)|b;
 
             // Renderizar dos triángulos que forman el quad
-            // Triángulo 1: (1,2,3)
-            drawTriangle(zbuffer, colorBuffer,
-                        sx1, sy1, d1,
-                        sx2, sy2, d2,
-                        sx3, sy3, d3,
-                        color);
-            
-            // Triángulo 2: (1,3,4)
-            drawTriangle(zbuffer, colorBuffer,
-                        sx1, sy1, d1,
-                        sx3, sy3, d3,
-                        sx4, sy4, d4,
-                        color);
+            drawTriangle(sx1, sy1, d1, sx2, sy2, d2, sx3, sy3, d3, color);
+            drawTriangle(sx1, sy1, d1, sx3, sy3, d3, sx4, sy4, d4, color);
         }
     }
 
@@ -357,7 +364,7 @@ void renderScene(SDL_Renderer* renderer, float t,
                             Uint8 r = (Uint8)(spheres[i].r*255*diff);
                             Uint8 g = (Uint8)(spheres[i].g*255*diff);
                             Uint8 b = (Uint8)(spheres[i].b*255*diff);
-                            colorBuffer[idx] = (r<<16)|(g<<8)|b;
+                            frameBuffer[idx] = (r<<16)|(g<<8)|b;  // ← DIRECTO AL FRAMEBUFFER
                         }
                     }
                 }
@@ -365,22 +372,15 @@ void renderScene(SDL_Renderer* renderer, float t,
         }
     }
 
-    // -----------------------------
-    // Renderizar al SDL
-    // -----------------------------
-    for(int i=0; i<windowWidth*windowHeight; i++){
-        Uint8 r = (colorBuffer[i]>>16)&0xFF;
-        Uint8 g = (colorBuffer[i]>>8)&0xFF;
-        Uint8 b = colorBuffer[i]&0xFF;
-        SDL_SetRenderDrawColor(renderer,r,g,b,255);
-        int x = i%windowWidth;
-        int y = i/windowWidth;
-        SDL_RenderDrawPoint(renderer,x,y);
-    }
-
-    // Liberar memoria
-    free(zbuffer);
-    free(colorBuffer);
+    // Renderizar toda la pantalla de una sola vez gracias a SDL Texture
+    Uint32* pixels;
+    int pitch;
+    
+    SDL_LockTexture(screenTexture, NULL, (void**)&pixels, &pitch);
+    memcpy(pixels, frameBuffer, windowWidth * windowHeight * sizeof(Uint32));
+    SDL_UnlockTexture(screenTexture);
+    
+    SDL_RenderCopy(renderer, screenTexture, NULL, NULL);
 }
 
 // -----------------------------------------------------------------------------
@@ -433,11 +433,18 @@ int main(int argc, char* argv[]){
     if (gridSize<GRID_SIZE) gridSize=GRID_SIZE;
 
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* window = SDL_CreateWindow("Pseudo 3D SDL con Luz",
+    SDL_Window* window = SDL_CreateWindow("Olas Secuencial OPTIMIZADO - SDL Texture",
         SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,
         windowWidth,windowHeight,SDL_WINDOW_SHOWN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
 
+    // INICIALIZAR TEXTURA Y BUFFERS PERSISTENTES
+    screenTexture = SDL_CreateTexture(renderer, 
+        SDL_PIXELFORMAT_ARGB8888, 
+        SDL_TEXTUREACCESS_STREAMING,
+        windowWidth, windowHeight);
+    
+    initRenderBuffers();  // Crear buffers una sola vez
     initSpheres(numSpheres);
 
     float centerX = gridSize*SCALE/2;
@@ -460,8 +467,6 @@ int main(int argc, char* argv[]){
 
     int viewMode = 1; // Inicio con cámara rotando
 
-    zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
-
     char title[128];  // Buffer para el título de la ventana
 
     while(running){
@@ -475,8 +480,7 @@ int main(int argc, char* argv[]){
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED) {
                 windowWidth = event.window.data1;
                 windowHeight = event.window.data2;
-
-                zbuffer = realloc(zbuffer, windowWidth * windowHeight * sizeof(float));
+                resizeRenderBuffers(renderer);  // Manejar redimensionamiento
             }
         }
 
@@ -510,7 +514,8 @@ int main(int argc, char* argv[]){
         t += 0.05f;     // Avanzar tiempo de animación
     }
 
-    free(zbuffer);
+    freeRenderBuffers();
+    if(screenTexture) SDL_DestroyTexture(screenTexture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
