@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
+#include <omp.h> 
 
 // Constantes de configuración
 #define GRID_SIZE 100          // Tamaño de la grilla del terreno
@@ -11,7 +12,7 @@
 #define DEF_SPHERES 15000000        // Número máximo de esferas
 #define GRAVITY -0.02f         // Fuerza de gravedad aplicada a las esferas
 #define BOUNCE 0.7f            // Factor de rebote (0-1, donde 1 es rebote perfecto)
-#define SPAWN_INTERVAL 1    // Tiempo entre aparición de esferas en milisegundos
+#define SPAWN_INTERVAL 1     // Tiempo entre aparición de esferas en milisegundos
 
 // Estructura que define una esfera con física
 typedef struct {
@@ -22,7 +23,14 @@ typedef struct {
     int active;       // Bandera para saber si la esfera está activa
 } Sphere;
 
+// Estructura para almacenar datos pre-calculados del terreno
+typedef struct {
+    float h1, h2, h3, h4;  // Alturas de las 4 esquinas
+    float r, g, b;         // Color del quad
+} TerrainQuad;
+
 Sphere spheres[DEF_SPHERES];  // Array de todas las esferas
+TerrainQuad terrainData[GRID_SIZE-1][GRID_SIZE-1];  // Pre-cálculo del terreno
 
 // Variables globales de configuración
 int numSpheres = 100000;       
@@ -48,31 +56,74 @@ void getTerrainColor(float x, float z, float t, float *r, float *g, float *b){
     *b = 0.7f + 0.2f * cosf(t + (x+z)*0.05f);
 }
 
-// Renderiza el terreno ondulado usando quads
-void renderTerrain(float t){
-    // Recorre cada celda de la grilla
-    for(int i=0;i<GRID_SIZE-1;i++){
-        for(int j=0;j<GRID_SIZE-1;j++){
-            // Calcula la altura en las 4 esquinas del quad
-            float h1 = waveHeight(i*SCALE,j*SCALE,t);
-            float h2 = waveHeight((i+1)*SCALE,j*SCALE,t);
-            float h3 = waveHeight((i+1)*SCALE,(j+1)*SCALE,t);
-            float h4 = waveHeight(i*SCALE,(j+1)*SCALE,t);
+// Pre-calcula los datos del terreno de forma paralela
+void updateTerrainData(float t){
+    int i, j;
+    
+    #pragma omp parallel for collapse(2) \
+        schedule(dynamic, 4) \
+        shared(t, terrainData) \
+        private(i, j)
+    for(i = 0; i < GRID_SIZE - 1; i++) {
+        for(j = 0; j < GRID_SIZE - 1; j++) {
+            // Calcular alturas de las 4 esquinas del quad
+            terrainData[i][j].h1 = waveHeight(i * SCALE, j * SCALE, t);
+            terrainData[i][j].h2 = waveHeight((i + 1) * SCALE, j * SCALE, t);
+            terrainData[i][j].h3 = waveHeight((i + 1) * SCALE, (j + 1) * SCALE, t);
+            terrainData[i][j].h4 = waveHeight(i * SCALE, (j + 1) * SCALE, t);
 
-            // Obtiene el color dinámico para esta celda
-            float r,g,b;
-            getTerrainColor(i,j,t,&r,&g,&b);
-            glColor3f(r,g,b);
+            // Calcular color del quad
+            getTerrainColor(i, j, t, &terrainData[i][j].r, &terrainData[i][j].g, &terrainData[i][j].b);
+        }
+    }
+}
 
-            // Dibuja el quad con las alturas calculadas
+// Renderiza el terreno ondulado usando los datos pre-calculados
+void renderTerrain(){
+    // Renderizado secuencial usando datos pre-calculados
+    for(int i = 0; i < GRID_SIZE - 1; i++) {
+        for(int j = 0; j < GRID_SIZE - 1; j++) {
+            TerrainQuad* quad = &terrainData[i][j];
+            
+            glColor3f(quad->r, quad->g, quad->b);
             glBegin(GL_QUADS);
-                glNormal3f(0,1,0);  // Normal hacia arriba
-                glVertex3f(i*SCALE,h1,j*SCALE);
-                glVertex3f((i+1)*SCALE,h2,j*SCALE);
-                glVertex3f((i+1)*SCALE,h3,(j+1)*SCALE);
-                glVertex3f(i*SCALE,h4,(j+1)*SCALE);
+                glNormal3f(0, 1, 0);
+                glVertex3f(i * SCALE, quad->h1, j * SCALE);
+                glVertex3f((i + 1) * SCALE, quad->h2, j * SCALE);
+                glVertex3f((i + 1) * SCALE, quad->h3, (j + 1) * SCALE);
+                glVertex3f(i * SCALE, quad->h4, (j + 1) * SCALE);
             glEnd();
         }
+    }
+}
+
+// Actualiza la física de las esferas de forma paralela
+void updateSpherePhysics(float t){
+    int i;
+    
+    #pragma omp parallel for \
+        schedule(dynamic, 1000) \
+        shared(spheres, numSpheres, t) \
+        private(i)
+    for(i = 0; i < numSpheres; i++){
+        if(!spheres[i].active) continue;
+        
+        // Actualización de posición basada en velocidad
+        spheres[i].x += spheres[i].vx;
+        spheres[i].z += spheres[i].vz;
+        spheres[i].vy += GRAVITY;  // Aplicar gravedad
+        spheres[i].y += spheres[i].vy;
+
+        // Colisión con el terreno ondulado
+        float floorY = waveHeight(spheres[i].x, spheres[i].z, t) + spheres[i].radius;
+        if(spheres[i].y < floorY){
+            spheres[i].y = floorY;
+            spheres[i].vy = -spheres[i].vy * BOUNCE;  // Rebote con pérdida de energía
+        }
+
+        // Rebote en los bordes del terreno
+        if(spheres[i].x < 0 || spheres[i].x > GRID_SIZE*SCALE) spheres[i].vx *= -1;
+        if(spheres[i].z < 0 || spheres[i].z > GRID_SIZE*SCALE) spheres[i].vz *= -1;
     }
 }
 
@@ -145,7 +196,7 @@ int main(int argc, char* argv[]){
 
     // Inicialización de SDL y creación de ventana
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* window = SDL_CreateWindow("Olas con Esferas",
+    SDL_Window* window = SDL_CreateWindow("Olas con Esferas - Paralelo",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, windowWidth, windowHeight,
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     SDL_GLContext context = SDL_GL_CreateContext(window);
@@ -166,19 +217,22 @@ int main(int argc, char* argv[]){
 
     // Inicialización de esferas con valores aleatorios
     srand((unsigned int)time(NULL));
+    #pragma omp parallel for
     for(int i=0;i<numSpheres;i++){
-        spheres[i].x = rand()%GRID_SIZE*SCALE;  // Posición X aleatoria
-        spheres[i].z = rand()%GRID_SIZE*SCALE;  // Posición Z aleatoria
-        spheres[i].y = 20.0f + ((float)rand() / RAND_MAX) * 60.0f;  // Altura inicial aleatoria
+        unsigned int seed = (unsigned int)time(NULL) + i; // Semilla única por hilo
+        
+        spheres[i].x = (rand_r(&seed) % GRID_SIZE) * SCALE;  // Posición X aleatoria
+        spheres[i].z = (rand_r(&seed) % GRID_SIZE) * SCALE;  // Posición Z aleatoria
+        spheres[i].y = 20.0f + ((float)rand_r(&seed) / RAND_MAX) * 60.0f;  // Altura inicial aleatoria
         // Velocidades iniciales aleatorias pequeñas
-        spheres[i].vx = ((rand()%100)/100.0f -0.5f)*0.2f;
-        spheres[i].vz = ((rand()%100)/100.0f -0.5f)*0.2f;
+        spheres[i].vx = ((rand_r(&seed)%100)/100.0f -0.5f)*0.2f;
+        spheres[i].vz = ((rand_r(&seed)%100)/100.0f -0.5f)*0.2f;
         spheres[i].vy = 0.0f;     // Sin velocidad vertical inicial
         spheres[i].radius = 0.5f; // Radio fijo
         // Colores aleatorios
-        spheres[i].r = 0.3f + ((rand()%100)/100.0f)*0.7f;
-        spheres[i].g = 0.3f + ((rand()%100)/100.0f)*0.7f;
-        spheres[i].b = 0.3f + ((rand()%100)/100.0f)*0.7f;
+        spheres[i].r = 0.3f + ((rand_r(&seed)%100)/100.0f)*0.7f;
+        spheres[i].g = 0.3f + ((rand_r(&seed)%100)/100.0f)*0.7f;
+        spheres[i].b = 0.3f + ((rand_r(&seed)%100)/100.0f)*0.7f;
         spheres[i].active = 0;    // Inicialmente inactivas
     }
 
@@ -249,29 +303,13 @@ int main(int argc, char* argv[]){
             lookZ = centerZ - camZ;
         }
 
-        // Simulación física de las esferas
-        for(int i=0;i<numSpheres;i++){
-            if(!spheres[i].active) continue;
-            
-            // Actualización de posición basada en velocidad
-            spheres[i].x += spheres[i].vx;
-            spheres[i].z += spheres[i].vz;
-            spheres[i].vy += GRAVITY;  // Aplicar gravedad
-            spheres[i].y += spheres[i].vy;
+        // Pre-calcular datos del terreno en paralelo
+        updateTerrainData(t);
+        
+        // Simulación física de las esferas en paralelo
+        updateSpherePhysics(t);
 
-            // Colisión con el terreno ondulado
-            float floorY = waveHeight(spheres[i].x, spheres[i].z, t) + spheres[i].radius;
-            if(spheres[i].y < floorY){
-                spheres[i].y = floorY;
-                spheres[i].vy = -spheres[i].vy * BOUNCE;  // Rebote con pérdida de energía
-            }
-
-            // Rebote en los bordes del terreno
-            if(spheres[i].x < 0 || spheres[i].x > GRID_SIZE*SCALE) spheres[i].vx *= -1;
-            if(spheres[i].z < 0 || spheres[i].z > GRID_SIZE*SCALE) spheres[i].vz *= -1;
-        }
-
-        // Renderizado de la escena
+        // Renderizado de la escena (secuencial)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glLoadIdentity();
         
@@ -280,14 +318,14 @@ int main(int argc, char* argv[]){
             camX + lookX, camY + lookY, camZ + lookZ,  // Punto al que mira
             0,1,0);                                    // Vector "arriba"
 
-        renderTerrain(t);  // Dibujar terreno ondulado
+        renderTerrain();   // Dibujar terreno ondulado
         renderSpheres();   // Dibujar esferas
 
         SDL_GL_SwapWindow(window);
 
         // Cálculo y mostrar FPS en el título
         float fps = 1.0f / deltaTime;
-        sprintf(title, "Olas con Esferas - FPS: %.2f", fps);
+        sprintf(title, "Olas con Esferas - Paralelo - FPS: %.2f", fps);
         SDL_SetWindowTitle(window, title);
 
         SDL_Delay(16);  // Limitar a ~60 FPS
