@@ -28,7 +28,9 @@ float waveFrequency = 1.0f;
 int windowWidth = 1024;
 int windowHeight = 768;
 
-// Z-buffer
+// Variables para SDL Texture
+SDL_Texture* screenTexture = NULL;
+Uint32* frameBuffer = NULL;
 float* zbuffer = NULL;
 
 // -----------------------------------------------------------------------------
@@ -65,6 +67,34 @@ void project3D(float camX,float camY,float camZ,float lookX,float lookY,float lo
     *depth = tz;
 }
 
+// funciones para gestión de buffers 
+void initRenderBuffers() {
+    frameBuffer = malloc(windowWidth * windowHeight * sizeof(Uint32));
+    zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
+}
+
+void freeRenderBuffers() {
+    if(frameBuffer) { free(frameBuffer); frameBuffer = NULL; }
+    if(zbuffer) { free(zbuffer); zbuffer = NULL; }
+}
+
+void resizeRenderBuffers(SDL_Renderer* renderer) {
+    // Liberar buffers antiguos
+    freeRenderBuffers();
+    
+    // Recrear textura con nuevo tamaño
+    if(screenTexture) {
+        SDL_DestroyTexture(screenTexture);
+    }
+    screenTexture = SDL_CreateTexture(renderer, 
+        SDL_PIXELFORMAT_ARGB8888, 
+        SDL_TEXTUREACCESS_STREAMING,
+        windowWidth, windowHeight);
+    
+    // Recrear buffers con nuevo tamaño
+    initRenderBuffers();
+}
+
 // -----------------------------------------------------------------------------
 // Inicialización de esferas
 // -----------------------------------------------------------------------------
@@ -93,7 +123,7 @@ void initSpheres(int n){
 // -----------------------------------------------------------------------------
 void updatePhysics(float t){
     // Movimiento y rebotes
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(static)
     for(int i=0;i<numSpheres;i++){
         if(!spheres[i].active) continue;
         spheres[i].x += spheres[i].vx;
@@ -151,13 +181,12 @@ void updatePhysics(float t){
     }
 }
 
-// -----------------------------------------------------------------------------
-// Reset Z-buffer
-// -----------------------------------------------------------------------------
+// Reset Z-buffer 
 void resetZBuffer(){
-    #pragma omp parallel for
-    for(int i=0;i<windowWidth*windowHeight;i++) {
+    #pragma omp parallel for schedule(static)
+    for(int i=0; i<windowWidth*windowHeight; i++){
         zbuffer[i] = 1e30f;
+        frameBuffer[i] = 0; // También resetear el framebuffer
     }
 }
 
@@ -175,12 +204,8 @@ void updateCamera(float centerX,float centerZ,float radius,float *camX,float *ca
     *lookZ = centerZ - *camZ;
 }
 
-// -----------------------------------------------------------------------------
-// Renderizar de escena
-// -----------------------------------------------------------------------------
-// Función auxiliar para renderizar triángulo relleno con z-buffer
-void drawTriangle(float** zbufLocal, Uint32** colorLocal, int tid,
-                  float x1, float y1, float z1,
+// Función auxiliar para renderizar triángulo relleno con z-buffer 
+void drawTriangle(float x1, float y1, float z1,
                   float x2, float y2, float z2,
                   float x3, float y3, float z3,
                   Uint32 color) {
@@ -226,15 +251,15 @@ void drawTriangle(float** zbufLocal, Uint32** colorLocal, int tid,
         int minX = (int)fmaxf(0, ceilf(xLeft));
         int maxX = (int)fminf(windowWidth-1, floorf(xRight));
         
-        // Renderizar scanline
+        // Renderizar scanline DIRECTAMENTE AL FRAMEBUFFER
         for (int x = minX; x <= maxX; x++) {
             float t = (xRight - xLeft == 0) ? 0 : (x - xLeft) / (xRight - xLeft);
             float z = zLeft + t * (zRight - zLeft);
             
             int idx = y * windowWidth + x;
-            if (z < zbufLocal[tid][idx]) {
-                zbufLocal[tid][idx] = z;
-                colorLocal[tid][idx] = color;
+            if (z < zbuffer[idx]) {
+                zbuffer[idx] = z;
+                frameBuffer[idx] = color;  // ← ESCRIBIR DIRECTO AL FRAMEBUFFER
             }
         }
     }
@@ -245,38 +270,35 @@ void renderScene(SDL_Renderer* renderer, float t,
                  float camX,float camY,float camZ,
                  float lookX,float lookY,float lookZ)
 {
-    int numThreads = omp_get_max_threads();
-
-    // Buffers locales por hilo
-    float** zbufLocal = malloc(numThreads * sizeof(float*));
-    Uint32** colorLocal = malloc(numThreads * sizeof(Uint32*));
-    for(int i=0;i<numThreads;i++){
-        zbufLocal[i] = malloc(windowWidth*windowHeight*sizeof(float));
-        colorLocal[i] = malloc(windowWidth*windowHeight*sizeof(Uint32));
-        for(int j=0;j<windowWidth*windowHeight;j++){
-            zbufLocal[i][j] = 1e30f;
-            colorLocal[i][j] = 0;
-        }
-    }
-
     // -----------------------------
-    // Render Terrain paralelo con triángulos
+    // Render Terrain secuencial con triángulos
     // -----------------------------
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(dynamic,1)
     for(int i=0; i<gridSize-1; i++){
-        int tid = omp_get_thread_num();
-        
         for(int j=0; j<gridSize-1; j++){
             // Calcular posiciones de los 4 vértices del quad
-            float wx1 = i*SCALE, wz1 = j*SCALE;
+            float wx1 = i*SCALE,     wz1 = j*SCALE;
             float wx2 = (i+1)*SCALE, wz2 = j*SCALE;
             float wx3 = (i+1)*SCALE, wz3 = (j+1)*SCALE;
-            float wx4 = i*SCALE, wz4 = (j+1)*SCALE;
+            float wx4 = i*SCALE,     wz4 = (j+1)*SCALE;
             
             float wy1 = waveHeight(wx1, wz1, t);
             float wy2 = waveHeight(wx2, wz2, t);
             float wy3 = waveHeight(wx3, wz3, t);
             float wy4 = waveHeight(wx4, wz4, t);
+
+            // --- Calcular centro del quad ---
+            float centerX = (wx1 + wx2 + wx3 + wx4) * 0.25f;
+            float centerY = (wy1 + wy2 + wy3 + wy4) * 0.25f;
+            float centerZ = (wz1 + wz2 + wz3 + wz4) * 0.25f;
+
+            // --- Descartar si está muy cerca de la cámara ---
+            float dx = centerX - camX;
+            float dy = centerY - camY;
+            float dz = centerZ - camZ;
+            float dist2 = dx*dx + dy*dy + dz*dz;
+            float minDist = 1.0f; // radio de exclusión
+            if(dist2 < minDist*minDist) continue;
 
             // Proyectar los 4 vértices
             float sx1, sy1, d1, sx2, sy2, d2, sx3, sy3, d3, sx4, sy4, d4;
@@ -288,12 +310,8 @@ void renderScene(SDL_Renderer* renderer, float t,
                       wx3, wy3, wz3, &sx3, &sy3, &d3);
             project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
                       wx4, wy4, wz4, &sx4, &sy4, &d4);
-
-            // Calcular normal del triángulo para iluminación (usando promedio del quad)
-            float centerX = (wx1 + wx2 + wx3 + wx4) * 0.25f;
-            float centerZ = (wz1 + wz2 + wz3 + wz4) * 0.25f;
-            float centerY = (wy1 + wy2 + wy3 + wy4) * 0.25f;
             
+            // Calcular normal para iluminación
             float hL = waveHeight(centerX-0.1f, centerZ, t);
             float hR = waveHeight(centerX+0.1f, centerZ, t);
             float hD = waveHeight(centerX, centerZ-0.1f, t);
@@ -317,29 +335,17 @@ void renderScene(SDL_Renderer* renderer, float t,
             Uint32 color = (r<<16)|(g<<8)|b;
 
             // Renderizar dos triángulos que forman el quad
-            // Triángulo 1: (1,2,3)
-            drawTriangle(zbufLocal, colorLocal, tid,
-                        sx1, sy1, d1,
-                        sx2, sy2, d2,
-                        sx3, sy3, d3,
-                        color);
-            
-            // Triángulo 2: (1,3,4)
-            drawTriangle(zbufLocal, colorLocal, tid,
-                        sx1, sy1, d1,
-                        sx3, sy3, d3,
-                        sx4, sy4, d4,
-                        color);
+            drawTriangle(sx1, sy1, d1, sx2, sy2, d2, sx3, sy3, d3, color);
+            drawTriangle(sx1, sy1, d1, sx3, sy3, d3, sx4, sy4, d4, color);
         }
     }
 
     // -----------------------------
-    // Render Esferas paralelo (sin cambios)
+    // Render Esferas secuencial
     // -----------------------------
-    #pragma omp parallel for schedule(dynamic)
-    for(int i=0;i<numSpheres;i++){
+    #pragma omp parallel for schedule(dynamic,1)
+    for(int i=0; i<numSpheres; i++){
         if(!spheres[i].active) continue;
-        int tid = omp_get_thread_num();
 
         float sx, sy, depth;
         project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
@@ -353,8 +359,8 @@ void renderScene(SDL_Renderer* renderer, float t,
                     int iy = (int)sy + dy;
                     if(ix>=0 && ix<windowWidth && iy>=0 && iy<windowHeight){
                         int idx = iy*windowWidth + ix;
-                        if(depth < zbufLocal[tid][idx]){
-                            zbufLocal[tid][idx] = depth;
+                        if(depth < zbuffer[idx]){
+                            zbuffer[idx] = depth;
 
                             float nx = dx/(float)rad;
                             float ny = -dy/(float)rad;
@@ -371,7 +377,7 @@ void renderScene(SDL_Renderer* renderer, float t,
                             Uint8 r = (Uint8)(spheres[i].r*255*diff);
                             Uint8 g = (Uint8)(spheres[i].g*255*diff);
                             Uint8 b = (Uint8)(spheres[i].b*255*diff);
-                            colorLocal[tid][idx] = (r<<16)|(g<<8)|b;
+                            frameBuffer[idx] = (r<<16)|(g<<8)|b;  // ← DIRECTO AL FRAMEBUFFER
                         }
                     }
                 }
@@ -379,36 +385,16 @@ void renderScene(SDL_Renderer* renderer, float t,
         }
     }
 
-    // -----------------------------
-    // Combinar buffers locales al global
-    // -----------------------------
-    for(int i=0;i<windowWidth*windowHeight;i++){
-        float minDepth = 1e30f;
-        Uint32 finalColor = 0;
-        for(int t=0;t<numThreads;t++){
-            if(zbufLocal[t][i]<minDepth){
-                minDepth = zbufLocal[t][i];
-                finalColor = colorLocal[t][i];
-            }
-        }
-        zbuffer[i] = minDepth;
-        Uint8 r = (finalColor>>16)&0xFF;
-        Uint8 g = (finalColor>>8)&0xFF;
-        Uint8 b = finalColor&0xFF;
-        SDL_SetRenderDrawColor(renderer,r,g,b,255);
-        int x = i%windowWidth;
-        int y = i/windowWidth;
-        SDL_RenderDrawPoint(renderer,x,y);
-    }
-
-    for(int i=0;i<numThreads;i++){
-        free(zbufLocal[i]);
-        free(colorLocal[i]);
-    }
-    free(zbufLocal);
-    free(colorLocal);
+    // Renderizar toda la pantalla de una sola vez gracias a SDL Texture
+    Uint32* pixels;
+    int pitch;
+    
+    SDL_LockTexture(screenTexture, NULL, (void**)&pixels, &pitch);
+    memcpy(pixels, frameBuffer, windowWidth * windowHeight * sizeof(Uint32));
+    SDL_UnlockTexture(screenTexture);
+    
+    SDL_RenderCopy(renderer, screenTexture, NULL, NULL);
 }
-
 
 // -----------------------------------------------------------------------------
 // Actualizar posición de la cámara según el modo
@@ -460,11 +446,18 @@ int main(int argc, char* argv[]){
     if (gridSize<GRID_SIZE) gridSize=GRID_SIZE;
 
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* window = SDL_CreateWindow("Pseudo 3D SDL con Luz",
+    SDL_Window* window = SDL_CreateWindow("Olas - SDL Texture",
         SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,
         windowWidth,windowHeight,SDL_WINDOW_SHOWN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
 
+    // INICIALIZAR TEXTURA Y BUFFERS PERSISTENTES
+    screenTexture = SDL_CreateTexture(renderer, 
+        SDL_PIXELFORMAT_ARGB8888, 
+        SDL_TEXTUREACCESS_STREAMING,
+        windowWidth, windowHeight);
+    
+    initRenderBuffers();  // Crear buffers una sola vez
     initSpheres(numSpheres);
 
     float centerX = gridSize*SCALE/2;
@@ -487,8 +480,6 @@ int main(int argc, char* argv[]){
 
     int viewMode = 1; // Inicio con cámara rotando
 
-    zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
-
     char title[128];  // Buffer para el título de la ventana
 
     while(running){
@@ -502,8 +493,7 @@ int main(int argc, char* argv[]){
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED) {
                 windowWidth = event.window.data1;
                 windowHeight = event.window.data2;
-
-                zbuffer = realloc(zbuffer, windowWidth * windowHeight * sizeof(float));
+                resizeRenderBuffers(renderer);  // Manejar redimensionamiento
             }
         }
 
@@ -530,14 +520,15 @@ int main(int argc, char* argv[]){
         
         // Cálculo y mostrar FPS en el título
         float fps = 1.0f / deltaTime;
-        sprintf(title, "Olas con Esferas - paralelo - FPS: %.2f", fps);
+        sprintf(title, "Olas con Esferas PARALELO - FPS: %.2f", fps);
         SDL_SetWindowTitle(window, title);
 
-        // SDL_Delay(16);  // Limitar a ~60 FPS
+        SDL_Delay(16);  // Limitar a ~60 FPS
         t += 0.05f;     // Avanzar tiempo de animación
     }
 
-    free(zbuffer);
+    freeRenderBuffers();
+    if(screenTexture) SDL_DestroyTexture(screenTexture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
