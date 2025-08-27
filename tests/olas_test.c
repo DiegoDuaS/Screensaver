@@ -274,37 +274,46 @@ void renderScene(SDL_Renderer* renderer, float t,
     for(int i=0; i<gridSize-1; i++){
         for(int j=0; j<gridSize-1; j++){
             // Calcular posiciones de los 4 vértices del quad
-            float wx1 = i*SCALE, wz1 = j*SCALE;
+            float wx1 = i*SCALE,     wz1 = j*SCALE;
             float wx2 = (i+1)*SCALE, wz2 = j*SCALE;
             float wx3 = (i+1)*SCALE, wz3 = (j+1)*SCALE;
-            float wx4 = i*SCALE, wz4 = (j+1)*SCALE;
-            
+            float wx4 = i*SCALE,     wz4 = (j+1)*SCALE;
+
             float wy1 = waveHeight(wx1, wz1, t);
             float wy2 = waveHeight(wx2, wz2, t);
             float wy3 = waveHeight(wx3, wz3, t);
             float wy4 = waveHeight(wx4, wz4, t);
 
+            // --- Calcular centro del quad ---
+            float centerX = (wx1 + wx2 + wx3 + wx4) * 0.25f;
+            float centerY = (wy1 + wy2 + wy3 + wy4) * 0.25f;
+            float centerZ = (wz1 + wz2 + wz3 + wz4) * 0.25f;
+
+            // --- Descartar si está muy cerca de la cámara ---
+            float dx = centerX - camX;
+            float dy = centerY - camY;
+            float dz = centerZ - camZ;
+            float dist2 = dx*dx + dy*dy + dz*dz;
+            float minDist = 1.0f; // radio de exclusión
+            if(dist2 < minDist*minDist) continue;
+
             // Proyectar los 4 vértices
             float sx1, sy1, d1, sx2, sy2, d2, sx3, sy3, d3, sx4, sy4, d4;
             project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
-                      wx1, wy1, wz1, &sx1, &sy1, &d1);
+                    wx1, wy1, wz1, &sx1, &sy1, &d1);
             project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
-                      wx2, wy2, wz2, &sx2, &sy2, &d2);
+                    wx2, wy2, wz2, &sx2, &sy2, &d2);
             project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
-                      wx3, wy3, wz3, &sx3, &sy3, &d3);
+                    wx3, wy3, wz3, &sx3, &sy3, &d3);
             project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
-                      wx4, wy4, wz4, &sx4, &sy4, &d4);
+                    wx4, wy4, wz4, &sx4, &sy4, &d4);
 
-            // Calcular normal del triángulo para iluminación
-            float centerX = (wx1 + wx2 + wx3 + wx4) * 0.25f;
-            float centerZ = (wz1 + wz2 + wz3 + wz4) * 0.25f;
-            float centerY = (wy1 + wy2 + wy3 + wy4) * 0.25f;
-            
+            // Calcular normal para iluminación
             float hL = waveHeight(centerX-0.1f, centerZ, t);
             float hR = waveHeight(centerX+0.1f, centerZ, t);
             float hD = waveHeight(centerX, centerZ-0.1f, t);
             float hU = waveHeight(centerX, centerZ+0.1f, t);
-            
+
             float nx = hL - hR, ny = 2.0f, nz = hD - hU;
             float len = sqrtf(nx*nx + ny*ny + nz*nz);
             nx/=len; ny/=len; nz/=len;
@@ -322,7 +331,7 @@ void renderScene(SDL_Renderer* renderer, float t,
             Uint8 b = (Uint8)((100+100*diff)*(1-0.3f*wave));
             Uint32 color = (r<<16)|(g<<8)|b;
 
-            // Renderizar dos triángulos que forman el quad
+            // Renderizar dos triángulos
             drawTriangle(sx1, sy1, d1, sx2, sy2, d2, sx3, sy3, d3, color);
             drawTriangle(sx1, sy1, d1, sx3, sy3, d3, sx4, sy4, d4, color);
         }
@@ -334,9 +343,19 @@ void renderScene(SDL_Renderer* renderer, float t,
     for(int i=0; i<numSpheres; i++){
         if(!spheres[i].active) continue;
 
+        // --- Distancia cámara a centro de la esfera ---
+        float dx = spheres[i].x - camX;
+        float dy = spheres[i].y - camY;
+        float dz = spheres[i].z - camZ;
+        float dist2 = dx*dx + dy*dy + dz*dz;
+        float minDist = 5.0f;  // radio de exclusión
+        if(dist2 < minDist*minDist) continue;  // muy cerca → no se dibuja
+
         float sx, sy, depth;
-        project3D(camX, camY, camZ, camX+lookX, camY+lookY, camZ+lookZ,
-                  spheres[i].x,spheres[i].y,spheres[i].z,&sx,&sy,&depth);
+        project3D(camX, camY, camZ,
+                camX+lookX, camY+lookY, camZ+lookZ,
+                spheres[i].x, spheres[i].y, spheres[i].z,
+                &sx,&sy,&depth);
 
         int rad = (int)(spheres[i].radius*500/depth);
         for(int dx=-rad; dx<=rad; dx++){
@@ -364,13 +383,14 @@ void renderScene(SDL_Renderer* renderer, float t,
                             Uint8 r = (Uint8)(spheres[i].r*255*diff);
                             Uint8 g = (Uint8)(spheres[i].g*255*diff);
                             Uint8 b = (Uint8)(spheres[i].b*255*diff);
-                            frameBuffer[idx] = (r<<16)|(g<<8)|b;  // ← DIRECTO AL FRAMEBUFFER
+                            frameBuffer[idx] = (r<<16)|(g<<8)|b;
                         }
                     }
                 }
             }
         }
     }
+
 
     // Renderizar toda la pantalla de una sola vez gracias a SDL Texture
     Uint32* pixels;
@@ -393,7 +413,7 @@ void updateCameraView(int viewMode, float centerX,float centerZ,float radius,flo
             *yaw += 0.01f;
             *camX = centerX + radius*sinf(*yaw);
             *camZ = centerZ + radius*cosf(*yaw);
-            *camY = 10.0f;
+            *camY = 15.0f;
             *lookX = centerX - *camX;
             *lookY = -(*camY);
             *lookZ = centerZ - *camZ;
