@@ -252,70 +252,72 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                          float lookX,float lookY,float lookZ,
                          float* precomputedHeights)
 {
-    // --- TERRENO ---
-    for(int i=0;i<gridSize;i++){
-        for(int j=0;j<gridSize;j++){
-            float x0 = i*SCALE,     z0 = j*SCALE;
-            float x1 = (i+1)*SCALE, z1 = j*SCALE;
-            float x2 = i*SCALE,     z2 = (j+1)*SCALE;
-            float x3 = (i+1)*SCALE, z3 = (j+1)*SCALE;
+    // --- TERRENO PARCIALMENTE VECTORIZADO ---
+    for (int i = 0; i < gridSize - 1; i++) {
+        for (int j = 0; j < gridSize - 1; j += 2) {
+            int maxK = (gridSize - j < 2) ? (gridSize - j) : 2;
+            #pragma omp simd
+            for (int k = 0; k < maxK; k++) {
+                int current_j = j + k;
+                
+                float x0 = i * SCALE, z0 = current_j * SCALE;
+                float x1 = (i + 1) * SCALE, z1 = current_j * SCALE;
+                float x2 = i * SCALE, z2 = (current_j + 1) * SCALE;
+                float x3 = (i + 1) * SCALE, z3 = (current_j + 1) * SCALE;
 
-            float y0 = precomputedHeights[i * gridSize + j];
-            float y1 = precomputedHeights[(i+1) * gridSize + j];
-            float y2 = precomputedHeights[i * gridSize + (j+1)];
-            float y3 = precomputedHeights[(i+1) * gridSize + (j+1)];
+                float y0 = precomputedHeights[i * gridSize + current_j];
+                float y1 = precomputedHeights[(i + 1) * gridSize + current_j];
+                float y2 = precomputedHeights[i * gridSize + (current_j + 1)];
+                float y3 = precomputedHeights[(i + 1) * gridSize + (current_j + 1)];
 
-            // Calcular centro del quad
-            float centerX = (x1 + x2 + x3 + x0) * 0.25f;
-            float centerY = (y1 + y2 + y3 + y0) * 0.25f;
-            float centerZ = (z1 + z2 + z3 + z0) * 0.25f;
+                float centerX = (x0 + x1 + x2 + x3) * 0.25f;
+                float centerY = (y0 + y1 + y2 + y3) * 0.25f;
+                float centerZ = (z0 + z1 + z2 + z3) * 0.25f;
 
-            // Descartar si está muy cerca de la cámara
-            float dx = centerX - camX;
-            float dy = centerY - camY;
-            float dz = centerZ - camZ;
-            float dist2 = dx*dx + dy*dy + dz*dz;
-            float minDist = 1.0f; // radio de exclusión
-            if(dist2 < minDist*minDist) continue;
+                float dx = centerX - camX;
+                float dy = centerY - camY;
+                float dz = centerZ - camZ;
+                float dist2 = dx * dx + dy * dy + dz * dz;
+                if (dist2 < 1.0f) continue;
 
-            // proyectar a pantalla
-            float sx0,sy0,sz0, sx1,sy1,sz1, sx2,sy2,sz2, sx3,sy3,sz3;
-            project3D(camX,camY,camZ,camX+lookX,camY+lookY,camZ+lookZ, x0,y0,z0,&sx0,&sy0,&sz0);
-            project3D(camX,camY,camZ,camX+lookX,camY+lookY,camZ+lookZ, x1,y1,z1,&sx1,&sy1,&sz1);
-            project3D(camX,camY,camZ,camX+lookX,camY+lookY,camZ+lookZ, x2,y2,z2,&sx2,&sy2,&sz2);
-            project3D(camX,camY,camZ,camX+lookX,camY+lookY,camZ+lookZ, x3,y3,z3,&sx3,&sy3,&sz3);
+                float sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, sx3, sy3, sz3;
+                project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
+                         x0, y0, z0, &sx0, &sy0, &sz0);
+                project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
+                         x1, y1, z1, &sx1, &sy1, &sz1);
+                project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
+                         x2, y2, z2, &sx2, &sy2, &sz2);
+                project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
+                         x3, y3, z3, &sx3, &sy3, &sz3);
 
-            float hL = (i > 0) ? precomputedHeights[(i-1) * gridSize + j] : y0;
-            float hR = (i < gridSize-1) ? precomputedHeights[(i+1) * gridSize + j] : y1;
-            float hD = (j > 0) ? precomputedHeights[i * gridSize + (j-1)] : y0;
-            float hU = (j < gridSize-1) ? precomputedHeights[i * gridSize + (j+1)] : y2;
+                float hL = (i > 0) ? precomputedHeights[(i - 1) * gridSize + current_j] : y0;
+                float hR = (i < gridSize - 2) ? precomputedHeights[(i + 2) * gridSize + current_j] : y1;
+                float hD = (current_j > 0) ? precomputedHeights[i * gridSize + (current_j - 1)] : y0;
+                float hU = (current_j < gridSize - 2) ? precomputedHeights[i * gridSize + (current_j + 2)] : y2;
 
-            float nx = hL - hR, ny = 2.0f, nz = hD - hU;
-            float len = sqrtf(nx*nx + ny*ny + nz*nz);
-            if (len > 0.0f) { // Evitar división por cero
-                nx /= len; 
-                ny /= len; 
-                nz /= len;
+                float nx = hL - hR, ny = 2.0f, nz = hD - hU;
+                float len = sqrtf(nx * nx + ny * ny + nz * nz);
+                if (len > 0.0f) {
+                    nx /= len; ny /= len; nz /= len;
+                }
+
+                float lx = lightX - centerX, ly = lightY - centerY, lz = lightZ - centerZ;
+                float llen = sqrtf(lx * lx + ly * ly + lz * lz);
+                lx /= llen; ly /= llen; lz /= llen;
+
+                float diff = fmaxf(0.0f, nx * lx + ny * ly + nz * lz);
+                float wave = 0.5f + 0.5f * sinf(t * 0.3f + (i + current_j) * 0.05f);
+                
+                Uint8 r = 10;
+                Uint8 g = (Uint8)((50 + 150 * diff) * wave);
+                Uint8 b = (Uint8)((100 + 100 * diff) * (1 - 0.3f * wave));
+                Uint32 color = (r << 16) | (g << 8) | b;
+
+                drawTriangleClipped(sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, 
+                                  color, minX, maxX, minY, maxY);
+                drawTriangleClipped(sx1, sy1, sz1, sx3, sy3, sz3, sx2, sy2, sz2, 
+                                  color, minX, maxX, minY, maxY);
             }
-
-            // dirección de la luz
-            float lx = lightX - centerX, ly = lightY - centerY, lz = lightZ - centerZ;
-            float llen = sqrtf(lx*lx + ly*ly + lz*lz);
-            lx/=llen; ly/=llen; lz/=llen;
-
-            float diff = fmaxf(0.0f, nx*lx + ny*ly + nz*lz);
-
-            // wave factor para animación de color
-            float wave = 0.5f + 0.5f*sinf(t*0.3f + (i+j)*0.05f);
-            Uint8 r = 10;
-            Uint8 g = (Uint8)((50+150*diff)*wave);
-            Uint8 b = (Uint8)((100+100*diff)*(1-0.3f*wave));
-            Uint32 color = (r<<16)|(g<<8)|b;
-
-            // dibujar triángulos
-            drawTriangleClipped(sx0,sy0,sz0, sx1,sy1,sz1, sx2,sy2,sz2, color, minX,maxX,minY,maxY);
-            drawTriangleClipped(sx1,sy1,sz1, sx3,sy3,sz3, sx2,sy2,sz2, color, minX,maxX,minY,maxY);
-
         }
     }
 
@@ -414,12 +416,14 @@ void updateCameraView(int viewMode, float centerX,float centerZ,float radius,flo
             *lookZ = centerZ - *camZ;
             break;
         case 2: // Vista desde el cielo
-            *camX = centerX;
-            *camY = 40.0f;
-            *camZ = centerZ;
-            *lookX = centerX;
-            *lookY = 90.0f;
-            *lookZ = centerZ;  
+            *camX = centerX - 20.0f;    // Posicionada a la izquierda
+            *camY = 35.0f;              // Alta enough para ver todo
+            *camZ = centerZ - 20.0f;    // Posicionada atrás
+            
+            // Mirar hacia el centro del terreno con ángulo oblicuo
+            *lookX = centerX - *camX;
+            *lookY = 5.0f - *camY;      // Mirar ligeramente hacia abajo
+            *lookZ = centerZ - *camZ;
             break;
         case 3: // Vista lateral fija
             *camX = -20.0f;
@@ -446,6 +450,8 @@ int main(int argc, char* argv[]){
 
     if(argc>2) gridSize=atof(argv[2]);
     if (gridSize<GRID_SIZE) gridSize=GRID_SIZE;
+
+    FILE* logFile = fopen("fps_log_paralelo.txt", "w");
 
     SDL_Init(SDL_INIT_VIDEO);
     SDL_Window* window = SDL_CreateWindow("Olas - SDL Texture",
@@ -540,13 +546,16 @@ int main(int argc, char* argv[]){
 
         // Cálculo y mostrar FPS en el título
         float fps = 1.0f / deltaTime;
-        sprintf(title, "Olas con Esferas PARALELO - FPS: %.2f", fps);
+        fprintf(logFile, "%.2f\n", fps);
+        fflush(logFile);
+        sprintf(title, "Olas PARALELO - FPS: %.2f - Esferas: %d", fps, spawned);
         SDL_SetWindowTitle(window, title);
 
         SDL_Delay(16);  // Limitar a ~60 FPS
         t += 0.05f;     // Avanzar tiempo de animación
     }
 
+    fclose(logFile);
     freeRenderBuffers();
     if(screenTexture) SDL_DestroyTexture(screenTexture);
     SDL_DestroyRenderer(renderer);
