@@ -137,6 +137,9 @@ void reshape(int w, int h){
 }
 
 int main(int argc, char* argv[]){
+    FILE* logFile = fopen("fps_log.txt", "w");
+    Uint32 startTime = SDL_GetTicks();
+    int maxDuration = 10000;   
     // Procesamiento de argumentos de línea de comandos
     if(argc > 1) numSpheres = atof(argv[1]);      // Número de esferas
     if(argc > 2) waveAmplitude = atof(argv[2]);   // Amplitud de olas
@@ -287,13 +290,21 @@ int main(int argc, char* argv[]){
 
         // Cálculo y mostrar FPS en el título
         float fps = 1.0f / deltaTime;
+        fprintf(logFile, "%.2f\n", fps);
+        fflush(logFile);
+
         sprintf(title, "Olas con Esferas - FPS: %.2f", fps);
         SDL_SetWindowTitle(window, title);
 
         SDL_Delay(16);  // Limitar a ~60 FPS
         t += 0.05f;     // Avanzar tiempo de animación
+
+        if (now - startTime >= maxDuration) {
+            running = 0;  // salir del bucle tras 10 segundos
+        }
     }
 
+    fclose(logFile);
     // Limpieza y cierre
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
