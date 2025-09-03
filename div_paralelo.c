@@ -6,7 +6,7 @@
 
 #define GRID_SIZE 40
 #define SCALE 1.0f
-#define DEF_SPHERES 10000
+#define DEF_SPHERES 100000
 #define GRAVITY -0.02f
 #define BOUNCE 0.7f
 #define SPAWN_INTERVAL 1
@@ -114,7 +114,7 @@ void initSpheres(int n){
         spheres[i].r = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].g = 0.3f + ((rand()%100)/100.0f)*0.7f;
         spheres[i].b = 0.3f + ((rand()%100)/100.0f)*0.7f;
-        spheres[i].active = 0;
+        spheres[i].active = 1;
     }
 }
 
@@ -140,45 +140,61 @@ void updatePhysics(float t){
         if(spheres[i].z<0 || spheres[i].z>gridSize*SCALE) spheres[i].vz*=-1;
     }
 
-    // Colisiones entre esferas
-    for(int i=0;i<numSpheres;i++){
-        if(!spheres[i].active) continue;
-        for(int j=i+1;j<numSpheres;j++){
-            if(!spheres[j].active) continue;
+    omp_lock_t *locks = malloc(numSpheres * sizeof(omp_lock_t));
+    for (int i = 0; i < numSpheres; i++) {
+        omp_init_lock(&locks[i]);
+    }
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < numSpheres; i++) {
+        for (int j = i + 1; j < numSpheres; j++) {
+            if (!spheres[i].active || !spheres[j].active) continue;
 
             float dx = spheres[j].x - spheres[i].x;
             float dy = spheres[j].y - spheres[i].y;
             float dz = spheres[j].z - spheres[i].z;
-            float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            float dist = sqrtf(dx * dx + dy * dy + dz * dz);
             float minDist = spheres[i].radius + spheres[j].radius;
 
-            if(dist < minDist && dist > 0.0f){
+            if (dist < minDist && dist > 0.0f) {
+                // bloquear acceso concurrente a las dos esferas
+                omp_set_lock(&locks[i]);
+                omp_set_lock(&locks[j]);
+
+                // normal de colisión
                 float nx = dx / dist;
                 float ny = dy / dist;
                 float nz = dz / dist;
+
+                // separar esferas para evitar penetración
                 float overlap = minDist - dist;
+                spheres[i].x -= nx * overlap * 0.5f;
+                spheres[i].y -= ny * overlap * 0.5f;
+                spheres[i].z -= nz * overlap * 0.5f;
+                spheres[j].x += nx * overlap * 0.5f;
+                spheres[j].y += ny * overlap * 0.5f;
+                spheres[j].z += nz * overlap * 0.5f;
 
-                spheres[i].x -= nx*overlap*0.5f;
-                spheres[i].y -= ny*overlap*0.5f;
-                spheres[i].z -= nz*overlap*0.5f;
-                spheres[j].x += nx*overlap*0.5f;
-                spheres[j].y += ny*overlap*0.5f;
-                spheres[j].z += nz*overlap*0.5f;
-
-                float viDot = spheres[i].vx*nx + spheres[i].vy*ny + spheres[i].vz*nz;
-                float vjDot = spheres[j].vx*nx + spheres[j].vy*ny + spheres[j].vz*nz;
+                // calcular velocidad proyectada en la normal
+                float viDot = spheres[i].vx * nx + spheres[i].vy * ny + spheres[i].vz * nz;
+                float vjDot = spheres[j].vx * nx + spheres[j].vy * ny + spheres[j].vz * nz;
                 float avg = (viDot + vjDot) * 0.5f;
 
-                spheres[i].vx += (avg - viDot)*nx;
-                spheres[i].vy += (avg - viDot)*ny;
-                spheres[i].vz += (avg - viDot)*nz;
+                // actualizar velocidades (choque elástico)
+                spheres[i].vx += (avg - viDot) * nx;
+                spheres[i].vy += (avg - viDot) * ny;
+                spheres[i].vz += (avg - viDot) * nz;
 
-                spheres[j].vx += (avg - vjDot)*nx;
-                spheres[j].vy += (avg - vjDot)*ny;
-                spheres[j].vz += (avg - vjDot)*nz;
+                spheres[j].vx += (avg - vjDot) * nx;
+                spheres[j].vy += (avg - vjDot) * ny;
+                spheres[j].vz += (avg - vjDot) * nz;
+
+                omp_unset_lock(&locks[j]);
+                omp_unset_lock(&locks[i]);
             }
         }
     }
+
 }
 
 // Reset Z-buffer 

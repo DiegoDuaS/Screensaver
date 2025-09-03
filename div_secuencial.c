@@ -110,7 +110,7 @@ void initSpheres(int n) {
         spheres[i].r = 0.3f + ((rand() % 100) / 100.0f) * 0.7f;
         spheres[i].g = 0.3f + ((rand() % 100) / 100.0f) * 0.7f;
         spheres[i].b = 0.3f + ((rand() % 100) / 100.0f) * 0.7f;
-        spheres[i].active = 0;
+        spheres[i].active = 1;
     }
 }
 
