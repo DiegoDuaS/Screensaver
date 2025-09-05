@@ -33,9 +33,7 @@ SDL_Texture* screenTexture = NULL;
 Uint32* frameBuffer = NULL;
 float* zbuffer = NULL;
 
-// -----------------------------------------------------------------------------
-// Funciones de utilidades
-// -----------------------------------------------------------------------------
+// Calculo de la altura de onda
 float waveHeight(float x,float z,float t){
     return waveAmplitude*(
         1.5f*sinf(0.3f*x*waveFrequency + t) +
@@ -44,15 +42,19 @@ float waveHeight(float x,float z,float t){
     );
 }
 
+// Proyección de los puntos 3D en 2D
 void project3D(float camX,float camY,float camZ,float lookX,float lookY,float lookZ,
                float x,float y,float z,float *sx,float *sy,float *depth) {
+    // Posición de la camara en (0,0,0)
     float rx = x - camX;
     float ry = y - camY;
     float rz = z - camZ;
 
+    // Vectores de dirección punto -> camara
     float lx = lookX - camX;
     float lz = lookZ - camZ;
 
+    // Angulo de movimiento hacia la vista de camara
     float angle = atan2f(lx,lz);
     float ca = cosf(angle);
     float sa = sinf(angle);
@@ -60,6 +62,7 @@ void project3D(float camX,float camY,float camZ,float lookX,float lookY,float lo
     float tz = sa*rx + ca*rz;
     float ty = ry;
 
+    // Proyección 2D
     float fov = 500.0f;
     if(tz <= 0.1f) tz = 0.1f;
     *sx = windowWidth/2 + tx * fov / tz;
@@ -67,17 +70,19 @@ void project3D(float camX,float camY,float camZ,float lookX,float lookY,float lo
     *depth = tz;
 }
 
-// funciones para gestión de buffers 
+// inicializar buffers
 void initRenderBuffers() {
     frameBuffer = malloc(windowWidth * windowHeight * sizeof(Uint32));
     zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
 }
 
+// liberar buffers
 void freeRenderBuffers() {
     if(frameBuffer) { free(frameBuffer); frameBuffer = NULL; }
     if(zbuffer) { free(zbuffer); zbuffer = NULL; }
 }
 
+// Manejar el cambio de tamaño de la ventana
 void resizeRenderBuffers(SDL_Renderer* renderer) {
     // Liberar buffers antiguos
     freeRenderBuffers();
@@ -95,14 +100,15 @@ void resizeRenderBuffers(SDL_Renderer* renderer) {
     initRenderBuffers();
 }
 
-// -----------------------------------------------------------------------------
+
 // Inicialización de esferas
-// -----------------------------------------------------------------------------
 void initSpheres(int n){
+    // Calculo aleatorio de posición
     srand((unsigned int)time(NULL));
     if(n>DEF_SPHERES) n=DEF_SPHERES;
     numSpheres = n;
 
+    // Registrar valores iniciales de la esfera
     for(int i=0;i<numSpheres;i++){
         spheres[i].x = (rand()%gridSize)*SCALE;
         spheres[i].z = (rand()%gridSize)*SCALE;
@@ -118,24 +124,27 @@ void initSpheres(int n){
     }
 }
 
-// -----------------------------------------------------------------------------
+
 // Física de esferas y colisiones
-// -----------------------------------------------------------------------------
 void updatePhysics(float t){
     // Movimiento y rebotes
     #pragma omp parallel for schedule(static)
     for(int i=0;i<numSpheres;i++){
         if(!spheres[i].active) continue;
+        // caida inicial
         spheres[i].x += spheres[i].vx;
         spheres[i].z += spheres[i].vz;
         spheres[i].vy += GRAVITY;
         spheres[i].y += spheres[i].vy;
 
+        // rebote con el terreno
         float floorY = waveHeight(spheres[i].x,spheres[i].z,t)+spheres[i].radius;
         if(spheres[i].y<floorY){
             spheres[i].y=floorY;
             spheres[i].vy*=-BOUNCE;
         }
+
+        // rebote en la pared
         if(spheres[i].x<0 || spheres[i].x>gridSize*SCALE) spheres[i].vx*=-1;
         if(spheres[i].z<0 || spheres[i].z>gridSize*SCALE) spheres[i].vz*=-1;
     }
@@ -150,6 +159,7 @@ void updatePhysics(float t){
         for (int j = i + 1; j < numSpheres; j++) {
             if (!spheres[i].active || !spheres[j].active) continue;
 
+            // Calculo de distancia entre esferas
             float dx = spheres[j].x - spheres[i].x;
             float dy = spheres[j].y - spheres[i].y;
             float dz = spheres[j].z - spheres[i].z;
@@ -214,20 +224,6 @@ void resetZBuffer() {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Actualizar posición de la cámara
-// -----------------------------------------------------------------------------
-void updateCamera(float centerX,float centerZ,float radius,float *camX,float *camY,float *camZ,
-                  float *lookX,float *lookY,float *lookZ,float *yaw,float camSpeed){
-    *yaw += camSpeed;
-    *camX = centerX + radius*sinf(*yaw);
-    *camZ = centerZ + radius*cosf(*yaw);
-    *camY = 15.0f;
-    *lookX = centerX - *camX;
-    *lookY = -(*camY);
-    *lookZ = centerZ - *camZ;
-}
-
 // Versión de drawTriangle que recorta a un cuadrante
 void drawTriangleClipped(int x1,int y1,float z1,
                          int x2,int y2,float z2,
@@ -235,18 +231,21 @@ void drawTriangleClipped(int x1,int y1,float z1,
                          Uint32 color,
                          int minX,int maxX,int minY,int maxY)
 {
+    // calculo del cuadrado más pequeño para el triangulo
     int minTx = fmax(minX, fmin(x1, fmin(x2, x3)));
     int maxTx = fmin(maxX-1, fmax(x1, fmax(x2, x3)));
     int minTy = fmax(minY, fmin(y1, fmin(y2, y3)));
     int maxTy = fmin(maxY-1, fmax(y1, fmax(y2, y3)));
 
+    // denominador (aproximadamente) dos veces el área
     float denom = (float)((y2 - y3)*(x1 - x3) + (x3 - x2)*(y1 - y3));
 
+    // pesos baricéntricos, para saber si un pixel debe pintarse o no, para este triángulo
     for(int y = minTy; y <= maxTy; y++){
         for(int x = minTx; x <= maxTx; x++){
             float w1 = ((y2 - y3)*(x - x3) + (x3 - x2)*(y - y3)) / denom;
             float w2 = ((y3 - y1)*(x - x3) + (x1 - x3)*(y - y3)) / denom;
-            float w3 = 1.0f - w1 - w2;
+            float w3 = 1.0f - w1 - w2; // la suma de los pesos es 1
 
             if(w1 >= 0 && w2 >= 0 && w3 >= 0){
                 float depth = w1*z1 + w2*z2 + w3*z3;
@@ -260,7 +259,7 @@ void drawTriangleClipped(int x1,int y1,float z1,
     }
 }
 
-// --- RENDER DE TERRENO Y ESFERAS ---
+// renderización de terreno y esferas en el cuadrante
 void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                          SDL_Renderer* renderer,float t,
                          float lightX,float lightY,float lightZ,
@@ -268,34 +267,41 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                          float lookX,float lookY,float lookZ,
                          float* precomputedHeights)
 {
-    // --- TERRENO PARCIALMENTE VECTORIZADO ---
+    // terreno con vectorización
     for (int i = 0; i < gridSize - 1; i++) {
         for (int j = 0; j < gridSize - 1; j += 2) {
             int maxK = (gridSize - j < 2) ? (gridSize - j) : 2;
+            
+            // Paralelización vectorizada para pequeños bucles internos
             #pragma omp simd
             for (int k = 0; k < maxK; k++) {
                 int current_j = j + k;
                 
+                // calcular coordenadas 3D de los vértices del terreno
                 float x0 = i * SCALE, z0 = current_j * SCALE;
                 float x1 = (i + 1) * SCALE, z1 = current_j * SCALE;
                 float x2 = i * SCALE, z2 = (current_j + 1) * SCALE;
                 float x3 = (i + 1) * SCALE, z3 = (current_j + 1) * SCALE;
 
+                // altura precalculada para cada vértice
                 float y0 = precomputedHeights[i * gridSize + current_j];
                 float y1 = precomputedHeights[(i + 1) * gridSize + current_j];
                 float y2 = precomputedHeights[i * gridSize + (current_j + 1)];
                 float y3 = precomputedHeights[(i + 1) * gridSize + (current_j + 1)];
-
+                
+                // calcular centro del cuadrado
                 float centerX = (x0 + x1 + x2 + x3) * 0.25f;
                 float centerY = (y0 + y1 + y2 + y3) * 0.25f;
                 float centerZ = (z0 + z1 + z2 + z3) * 0.25f;
 
+                // distancia al cámara para no dibujar demasiado cerca
                 float dx = centerX - camX;
                 float dy = centerY - camY;
                 float dz = centerZ - camZ;
                 float dist2 = dx * dx + dy * dy + dz * dz;
                 if (dist2 < 1.0f) continue;
 
+                // proyectar los vértices
                 float sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, sx3, sy3, sz3;
                 project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
                          x0, y0, z0, &sx0, &sy0, &sz0);
@@ -306,6 +312,7 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                 project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
                          x3, y3, z3, &sx3, &sy3, &sz3);
 
+                // calcular normales para iluminación
                 float hL = (i > 0) ? precomputedHeights[(i - 1) * gridSize + current_j] : y0;
                 float hR = (i < gridSize - 2) ? precomputedHeights[(i + 2) * gridSize + current_j] : y1;
                 float hD = (current_j > 0) ? precomputedHeights[i * gridSize + (current_j - 1)] : y0;
@@ -317,6 +324,7 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                     nx /= len; ny /= len; nz /= len;
                 }
 
+                // iluminación difusa
                 float lx = lightX - centerX, ly = lightY - centerY, lz = lightZ - centerZ;
                 float llen = sqrtf(lx * lx + ly * ly + lz * lz);
                 lx /= llen; ly /= llen; lz /= llen;
@@ -329,6 +337,7 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                 Uint8 b = (Uint8)((100 + 100 * diff) * (1 - 0.3f * wave));
                 Uint32 color = (r << 16) | (g << 8) | b;
 
+                // dibujar los 2 triángulos del cuadrado
                 drawTriangleClipped(sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, 
                                   color, minX, maxX, minY, maxY);
                 drawTriangleClipped(sx1, sy1, sz1, sx3, sy3, sz3, sx2, sy2, sz2, 
@@ -337,7 +346,7 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
         }
     }
 
-    // --- ESFERAS ---
+    // esferas
     for(int i=0; i<numSpheres; i++){
         if(!spheres[i].active) continue;
 
@@ -358,6 +367,7 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
                     if(z < zbuffer[idx]){
                         zbuffer[idx] = z;
                         
+                        // calcular iluminación de cada pixel de la esfera
                         float nx = dx/(float)radius;
                         float ny = -dy/(float)radius;
                         float nz = sqrtf(fmaxf(0.0f,1-nx*nx-ny*ny));
@@ -381,20 +391,21 @@ void renderSceneQuadrant(int minX,int maxX,int minY,int maxY,
     }
 }
 
+// renderizar escena completa
 void renderScene(SDL_Renderer* renderer,float t,
                  float lightX,float lightY,float lightZ,
                  float camX,float camY,float camZ,
                  float lookX,float lookY,float lookZ,
                 float* precomputedHeights)
 {
-    int numThreads = omp_get_max_threads();
+    int numThreads = omp_get_max_threads(); //número de hilos según disponibilidad
 
-    // Calcular divisiones aproximadas: filas y columnas
+    // dividir la pantalla en cuadrantes
     int nCols = 2;  // Empezar con 2 columnas
     int nRows = omp_get_max_threads() / nCols;
     if (nRows * nCols < omp_get_max_threads()) nRows++;
 
-    // Usar chunks más grandes para reducir overhead
+    // Paralelizar por cuadrantes de pantalla
     #pragma omp parallel for collapse(2) schedule(static, 1)
     for(int row=0; row<nRows; row++){
         for(int col=0; col<nCols; col++){
@@ -406,6 +417,7 @@ void renderScene(SDL_Renderer* renderer,float t,
             int minY = row * windowHeight / nRows;
             int maxY = (row+1) * windowHeight / nRows;
 
+            // renderizar cada cuadrante en paralelo
             renderSceneQuadrant(minX, maxX, minY, maxY,
                                 renderer, t,
                                 lightX, lightY, lightZ,
@@ -416,9 +428,7 @@ void renderScene(SDL_Renderer* renderer,float t,
     }
 }
 
-// -----------------------------------------------------------------------------
-// Actualizar posición de la cámara según el modo
-// -----------------------------------------------------------------------------
+// Actualizar posición de la cámara según el modo elegido
 void updateCameraView(int viewMode, float centerX,float centerZ,float radius,float *camX,float *camY,float *camZ,
                       float *lookX,float *lookY,float *lookZ,float *yaw){
     switch(viewMode){
@@ -475,7 +485,7 @@ int main(int argc, char* argv[]){
         windowWidth,windowHeight,SDL_WINDOW_SHOWN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
 
-    // INICIALIZAR TEXTURA Y BUFFERS PERSISTENTES
+    // inicializar textura y buffers persistentes
     screenTexture = SDL_CreateTexture(renderer, 
         SDL_PIXELFORMAT_ARGB8888, 
         SDL_TEXTUREACCESS_STREAMING,
@@ -507,7 +517,7 @@ int main(int argc, char* argv[]){
     char title[128];  // Buffer para el título de la ventana
 
     while(running){
-        while(SDL_PollEvent(&event)){
+        while(SDL_PollEvent(&event)){ // atento a acciones del usuario
             if(event.type==SDL_QUIT) running=0;
             if(event.type==SDL_KEYDOWN){
                 if(event.key.keysym.sym==SDLK_1) viewMode=1;
@@ -538,6 +548,7 @@ int main(int argc, char* argv[]){
         SDL_SetRenderDrawColor(renderer,0,0,0,255);
         SDL_RenderClear(renderer);
 
+        // calculo de alturas, para evitar recalcular múltiples veces
         float* precomputedHeights = malloc(gridSize * gridSize * sizeof(float));
         #pragma omp parallel for collapse(2)
         for(int i = 0; i < gridSize; i++) {
