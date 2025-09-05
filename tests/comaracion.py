@@ -38,4 +38,4 @@ def comparar_archivos(file1, file2):
         print("\n⚖️ Ambos archivos generan el mismo FPS promedio.")
 
 if __name__ == "__main__":
-    comparar_archivos("fps_log.txt", "fps_log_paralelo.txt")
+    comparar_archivos("fps_log_secuencial.txt", "fps_log_paralelo.txt")

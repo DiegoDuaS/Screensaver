@@ -11,15 +11,16 @@
 #define SPAWN_INTERVAL 1
 
 typedef struct {
-    float x, y, z;
-    float vx, vy, vz;
+    float x, y, z; // posición
+    float vx, vy, vz; // velocidades
     float radius;
-    float r, g, b;
-    int active;
+    float r, g, b; // color
+    int active; 
 } Sphere;
 
 Sphere spheres[DEF_SPHERES];
 
+// Variables Globales
 int numSpheres = 1;
 int gridSize = GRID_SIZE;
 float waveAmplitude = 2.0f;
@@ -32,9 +33,8 @@ SDL_Texture* screenTexture = NULL;
 Uint32* frameBuffer = NULL;
 float* zbuffer = NULL;
 
-// -----------------------------------------------------------------------------
-// Funciones de utilidades
-// -----------------------------------------------------------------------------
+
+// Función para calcular la altura de la ola
 float waveHeight(float x, float z, float t) {
     return waveAmplitude * (
         1.5f * sinf(0.3f * x * waveFrequency + t) +
@@ -43,6 +43,7 @@ float waveHeight(float x, float z, float t) {
     );
 }
 
+// Proyectar algo en 3D en 2D
 void project3D(float camX, float camY, float camZ, float lookX, float lookY, float lookZ,
                float x, float y, float z, float *sx, float *sy, float *depth) {
     float rx = x - camX;
@@ -66,17 +67,19 @@ void project3D(float camX, float camY, float camZ, float lookX, float lookY, flo
     *depth = tz;
 }
 
-// funciones para gestión de buffers 
+// Inicializar el buffer y zbuffer
 void initRenderBuffers() {
     frameBuffer = malloc(windowWidth * windowHeight * sizeof(Uint32));
     zbuffer = malloc(windowWidth * windowHeight * sizeof(float));
 }
 
+// Libera las memorias de los buffers
 void freeRenderBuffers() {
     if (frameBuffer) { free(frameBuffer); frameBuffer = NULL; }
     if (zbuffer) { free(zbuffer); zbuffer = NULL; }
 }
 
+// En caso de que cambie el tamaño de la pantalla, se le hace un resize
 void resizeRenderBuffers(SDL_Renderer* renderer) {
     freeRenderBuffers();
     
@@ -91,9 +94,8 @@ void resizeRenderBuffers(SDL_Renderer* renderer) {
     initRenderBuffers();
 }
 
-// -----------------------------------------------------------------------------
-// Inicialización de esferas
-// -----------------------------------------------------------------------------
+
+// Se inicializan las esferas
 void initSpheres(int n) {
     srand((unsigned int)time(NULL));
     if (n > DEF_SPHERES) n = DEF_SPHERES;
@@ -114,11 +116,9 @@ void initSpheres(int n) {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Física de esferas y colisiones SECUENCIAL
-// -----------------------------------------------------------------------------
+//Fisica de esferas
 void updatePhysics(float t) {
-    // Movimiento y rebotes SECUENCIAL
+    // Movimiento y Rebote
     for (int i = 0; i < numSpheres; i++) {
         if (!spheres[i].active) continue;
         
@@ -140,7 +140,7 @@ void updatePhysics(float t) {
             spheres[i].vz *= -1;
     }
 
-    // Colisiones entre esferas SECUENCIAL
+    // Colisiones entre esferas
     for (int i = 0; i < numSpheres; i++) {
         if (!spheres[i].active) continue;
         
@@ -182,7 +182,7 @@ void updatePhysics(float t) {
     }
 }
 
-// Reset Z-buffer SECUENCIAL
+// Reset Z-buffer
 void resetZBuffer() {
     for (int i = 0; i < windowWidth * windowHeight; i++) {
         zbuffer[i] = 1e30f;
@@ -190,19 +190,6 @@ void resetZBuffer() {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Actualizar posición de la cámara
-// -----------------------------------------------------------------------------
-void updateCamera(float centerX, float centerZ, float radius, float *camX, float *camY, float *camZ,
-                  float *lookX, float *lookY, float *lookZ, float *yaw, float camSpeed) {
-    *yaw += camSpeed;
-    *camX = centerX + radius * sinf(*yaw);
-    *camZ = centerZ + radius * cosf(*yaw);
-    *camY = 15.0f;
-    *lookX = centerX - *camX;
-    *lookY = -(*camY);
-    *lookZ = centerZ - *camZ;
-}
 
 // Versión de drawTriangle que recorta a un cuadrante
 void drawTriangleClipped(int x1, int y1, float z1,
@@ -210,13 +197,16 @@ void drawTriangleClipped(int x1, int y1, float z1,
                          int x3, int y3, float z3,
                          Uint32 color,
                          int minX, int maxX, int minY, int maxY) {
+    // Calcular el cuadrado mas pequeño en la pantalla que incluye al triangulo
     int minTx = fmax(minX, fmin(x1, fmin(x2, x3)));
     int maxTx = fmin(maxX - 1, fmax(x1, fmax(x2, x3)));
     int minTy = fmax(minY, fmin(y1, fmin(y2, y3)));
     int maxTy = fmin(maxY - 1, fmax(y1, fmax(y2, y3)));
+    
 
     float denom = (float)((y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3));
-
+    
+    // Pesos baricéntricos
     for (int y = minTy; y <= maxTy; y++) {
         for (int x = minTx; x <= maxTx; x++) {
             float w1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / denom;
@@ -235,36 +225,42 @@ void drawTriangleClipped(int x1, int y1, float z1,
     }
 }
 
-// --- RENDER DE TERRENO Y ESFERAS SECUENCIAL ---
+// Render Cuadrante
 void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
                          SDL_Renderer* renderer, float t,
                          float lightX, float lightY, float lightZ,
                          float camX, float camY, float camZ,
                          float lookX, float lookY, float lookZ,
                          float* precomputedHeights) {
-    // --- TERRENO SECUENCIAL ---
+    
+    // Render Terreno
     for (int i = 0; i < gridSize - 1; i++) {
         for (int j = 0; j < gridSize - 1; j++) {
+            // Esquinas
             float x0 = i * SCALE, z0 = j * SCALE;
             float x1 = (i + 1) * SCALE, z1 = j * SCALE;
             float x2 = i * SCALE, z2 = (j + 1) * SCALE;
             float x3 = (i + 1) * SCALE, z3 = (j + 1) * SCALE;
-
+            
+            // Altura de Esquinas
             float y0 = precomputedHeights[i * gridSize + j];
             float y1 = precomputedHeights[(i + 1) * gridSize + j];
             float y2 = precomputedHeights[i * gridSize + (j + 1)];
             float y3 = precomputedHeights[(i + 1) * gridSize + (j + 1)];
 
+            // Centro del Grid
             float centerX = (x0 + x1 + x2 + x3) * 0.25f;
             float centerY = (y0 + y1 + y2 + y3) * 0.25f;
             float centerZ = (z0 + z1 + z2 + z3) * 0.25f;
-
+            
+            // Vectores de direccion de la camara al centro
             float dx = centerX - camX;
             float dy = centerY - camY;
             float dz = centerZ - camZ;
             float dist2 = dx * dx + dy * dy + dz * dz;
             if (dist2 < 1.0f) continue;
 
+            // Proyeccion en 2D
             float sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, sx3, sy3, sz3;
             project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
                      x0, y0, z0, &sx0, &sy0, &sz0);
@@ -274,30 +270,36 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
                      x2, y2, z2, &sx2, &sy2, &sz2);
             project3D(camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ,
                      x3, y3, z3, &sx3, &sy3, &sz3);
+            
 
+            // Normales
             float hL = (i > 0) ? precomputedHeights[(i - 1) * gridSize + j] : y0;
             float hR = (i < gridSize - 2) ? precomputedHeights[(i + 2) * gridSize + j] : y1;
             float hD = (j > 0) ? precomputedHeights[i * gridSize + (j - 1)] : y0;
             float hU = (j < gridSize - 2) ? precomputedHeights[i * gridSize + (j + 2)] : y2;
-
+            
             float nx = hL - hR, ny = 2.0f, nz = hD - hU;
             float len = sqrtf(nx * nx + ny * ny + nz * nz);
             if (len > 0.0f) {
                 nx /= len; ny /= len; nz /= len;
             }
-
+            
+            // Vector de Luz
             float lx = lightX - centerX, ly = lightY - centerY, lz = lightZ - centerZ;
             float llen = sqrtf(lx * lx + ly * ly + lz * lz);
             lx /= llen; ly /= llen; lz /= llen;
 
+            // Difuso, si no choca con el vector de luz
             float diff = fmaxf(0.0f, nx * lx + ny * ly + nz * lz);
             float wave = 0.5f + 0.5f * sinf(t * 0.3f + (i + j) * 0.05f);
             
+            // Colores
             Uint8 r = 10;
             Uint8 g = (Uint8)((50 + 150 * diff) * wave);
             Uint8 b = (Uint8)((100 + 100 * diff) * (1 - 0.3f * wave));
             Uint32 color = (r << 16) | (g << 8) | b;
 
+            //Dibujar triangulos
             drawTriangleClipped(sx0, sy0, sz0, sx1, sy1, sz1, sx2, sy2, sz2, 
                               color, minX, maxX, minY, maxY);
             drawTriangleClipped(sx1, sy1, sz1, sx3, sy3, sz3, sx2, sy2, sz2, 
@@ -305,7 +307,7 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
         }
     }
 
-    // --- ESFERAS SECUENCIAL ---
+    // Render Esferas
     for (int i = 0; i < numSpheres; i++) {
         if (!spheres[i].active) continue;
 
@@ -314,7 +316,8 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
                   spheres[i].x, spheres[i].y, spheres[i].z, &sx, &sy, &depth);
 
         int radius = (int)(spheres[i].radius * windowWidth / (2 * depth + 1));
-
+        
+        // Recorrer pixeles de esfera
         for (int dy = -radius; dy <= radius; dy++) {
             for (int dx = -radius; dx <= radius; dx++) {
                 int px = sx + dx;
@@ -326,13 +329,16 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
                     if (depth < zbuffer[idx]) {
                         zbuffer[idx] = depth;
                         
+                        // Vector Normal
                         float nx = dx / (float)radius;
                         float ny = -dy / (float)radius;
                         float nz = sqrtf(fmaxf(0.0f, 1 - nx * nx - ny * ny));
+                        // Posicion en 3D
                         float px3D = spheres[i].x + nx * spheres[i].radius;
                         float py3D = spheres[i].y + ny * spheres[i].radius;
                         float pz3D = spheres[i].z + nz * spheres[i].radius;
-
+                        
+                        // Luz
                         float lx = lightX - px3D, ly = lightY - py3D, lz = lightZ - pz3D;
                         float len = sqrtf(lx * lx + ly * ly + lz * lz);
                         lx /= len; ly /= len; lz /= len;
@@ -349,15 +355,13 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
     }
 }
 
-// -----------------------------------------------------------------------------
-// Render scene completo SECUENCIAL
-// -----------------------------------------------------------------------------
+// Renderizar Escena
 void renderScene(SDL_Renderer* renderer, float t,
                  float lightX, float lightY, float lightZ,
                  float camX, float camY, float camZ,
                  float lookX, float lookY, float lookZ,
                  float* precomputedHeights) {
-    // Renderizar todo el framebuffer secuencialmente
+    // Renderizar Cuadrante
     renderSceneQuadrant(0, windowWidth, 0, windowHeight,
                        renderer, t,
                        lightX, lightY, lightZ,
@@ -366,9 +370,7 @@ void renderScene(SDL_Renderer* renderer, float t,
                        precomputedHeights);
 }
 
-// -----------------------------------------------------------------------------
-// Actualizar posición de la cámara según el modo
-// -----------------------------------------------------------------------------
+//Actualizar vistas de la camara
 void updateCameraView(int viewMode, float centerX, float centerZ, float radius, 
                      float *camX, float *camY, float *camZ,
                      float *lookX, float *lookY, float *lookZ, float *yaw) {
@@ -412,9 +414,7 @@ void updateCameraView(int viewMode, float centerX, float centerZ, float radius,
     }
 }
 
-// -----------------------------------------------------------------------------
-// MAIN SECUENCIAL
-// -----------------------------------------------------------------------------
+// Main 
 int main(int argc, char* argv[]) {
     if (argc > 1) numSpheres = atoi(argv[1]);
     if (numSpheres <= 0) numSpheres = DEF_SPHERES;
@@ -494,7 +494,7 @@ int main(int argc, char* argv[]) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        // Precalculo de alturas SECUENCIAL
+        // Precalculo de alturas 
         float* precomputedHeights = malloc(gridSize * gridSize * sizeof(float));
         for (int i = 0; i < gridSize; i++) {
             for (int j = 0; j < gridSize; j++) {
