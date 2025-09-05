@@ -46,20 +46,26 @@ float waveHeight(float x, float z, float t) {
 // Proyectar algo en 3D en 2D
 void project3D(float camX, float camY, float camZ, float lookX, float lookY, float lookZ,
                float x, float y, float z, float *sx, float *sy, float *depth) {
+    // Mover para que camara este en (0,0,0)
     float rx = x - camX;
     float ry = y - camY;
     float rz = z - camZ;
-
+    
+    // Vectores de direccion
     float lx = lookX - camX;
     float lz = lookZ - camZ;
-
+    
+    // Calculo de angulo de referencia
     float angle = atan2f(lx, lz);
     float ca = cosf(angle);
     float sa = sinf(angle);
+
+    //Rotacion
     float tx = ca * rx - sa * rz;
     float tz = sa * rx + ca * rz;
     float ty = ry;
-
+    
+    //Proyeccion en 2D
     float fov = 500.0f;
     if (tz <= 0.1f) tz = 0.1f;
     *sx = windowWidth / 2 + tx * fov / tz;
@@ -122,18 +128,22 @@ void updatePhysics(float t) {
     for (int i = 0; i < numSpheres; i++) {
         if (!spheres[i].active) continue;
         
+        // Valores inciales
         spheres[i].x += spheres[i].vx;
         spheres[i].z += spheres[i].vz;
         spheres[i].vy += GRAVITY;
         spheres[i].y += spheres[i].vy;
 
+        //Altura del piso
         float floorY = waveHeight(spheres[i].x, spheres[i].z, t) + spheres[i].radius;
         
+        // Rebote con el piso
         if (spheres[i].y < floorY) {
             spheres[i].y = floorY;
             spheres[i].vy *= -BOUNCE;
         }
         
+        // Rebote con la pared
         if (spheres[i].x < 0 || spheres[i].x > gridSize * SCALE) 
             spheres[i].vx *= -1;
         if (spheres[i].z < 0 || spheres[i].z > gridSize * SCALE) 
@@ -147,16 +157,20 @@ void updatePhysics(float t) {
         for (int j = i + 1; j < numSpheres; j++) {
             if (!spheres[j].active) continue;
 
+            // Distancias entre 2 esferas
             float dx = spheres[j].x - spheres[i].x;
             float dy = spheres[j].y - spheres[i].y;
             float dz = spheres[j].z - spheres[i].z;
             float dist = sqrtf(dx * dx + dy * dy + dz * dz);
             float minDist = spheres[i].radius + spheres[j].radius;
 
+            //Colision
             if (dist < minDist && dist > 0.0f) {
+                // Vectores de direccion
                 float nx = dx / dist;
                 float ny = dy / dist;
                 float nz = dz / dist;
+                // Evitar overlap visual
                 float overlap = minDist - dist;
 
                 spheres[i].x -= nx * overlap * 0.5f;
@@ -165,11 +179,15 @@ void updatePhysics(float t) {
                 spheres[j].x += nx * overlap * 0.5f;
                 spheres[j].y += ny * overlap * 0.5f;
                 spheres[j].z += nz * overlap * 0.5f;
-
+                
+                // Calculo de nuevas velocidades
                 float viDot = spheres[i].vx * nx + spheres[i].vy * ny + spheres[i].vz * nz;
                 float vjDot = spheres[j].vx * nx + spheres[j].vy * ny + spheres[j].vz * nz;
+
+                // Promedio para dar equitativamente las velocidades
                 float avg = (viDot + vjDot) * 0.5f;
 
+                // Darle nueva velocidad a las esferas
                 spheres[i].vx += (avg - viDot) * nx;
                 spheres[i].vy += (avg - viDot) * ny;
                 spheres[i].vz += (avg - viDot) * nz;
@@ -213,6 +231,7 @@ void drawTriangleClipped(int x1, int y1, float z1,
             float w2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / denom;
             float w3 = 1.0f - w1 - w2;
 
+            // Si los pesos son mayores a 1, adentro del triangulo
             if (w1 >= 0 && w2 >= 0 && w3 >= 0) {
                 float depth = w1 * z1 + w2 * z2 + w3 * z3;
                 int idx = y * windowWidth + x;
@@ -342,8 +361,10 @@ void renderSceneQuadrant(int minX, int maxX, int minY, int maxY,
                         float lx = lightX - px3D, ly = lightY - py3D, lz = lightZ - pz3D;
                         float len = sqrtf(lx * lx + ly * ly + lz * lz);
                         lx /= len; ly /= len; lz /= len;
-
+                        //Difuso, si no choca con el vector de luz
                         float diff = fmaxf(0.0f, nx * lx + ny * ly + nz * lz);
+
+                        //Colores
                         Uint8 r = (Uint8)(spheres[i].r * 255 * diff);
                         Uint8 g = (Uint8)(spheres[i].g * 255 * diff);
                         Uint8 b = (Uint8)(spheres[i].b * 255 * diff);
@@ -416,6 +437,7 @@ void updateCameraView(int viewMode, float centerX, float centerZ, float radius,
 
 // Main 
 int main(int argc, char* argv[]) {
+    // Argumentos Iniciales
     if (argc > 1) numSpheres = atoi(argv[1]);
     if (numSpheres <= 0) numSpheres = DEF_SPHERES;
 
@@ -424,6 +446,7 @@ int main(int argc, char* argv[]) {
 
     FILE* logFile = fopen("fps_log_secuencial.txt", "w");
 
+    // Incializar el SDL
     SDL_Init(SDL_INIT_VIDEO);
     SDL_Window* window = SDL_CreateWindow("Olas - SDL Texture (SECUENCIAL)",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -437,7 +460,8 @@ int main(int argc, char* argv[]) {
     
     initRenderBuffers();
     initSpheres(numSpheres);
-
+    
+    // Valores inciiales
     float centerX = gridSize * SCALE / 2;
     float centerZ = gridSize * SCALE / 2;
     float radius = 10.0f;
